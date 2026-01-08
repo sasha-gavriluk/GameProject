@@ -186,6 +186,7 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
             PopMatrix()
 
     def update_content(self, *args):
+        """Оновлює текст на карті (масть та ранг)"""
         self.clear_widgets()
         self.update_canvas()
         if not self.is_face_up: return
@@ -193,21 +194,31 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
         symbol = self.suit_symbol() 
         color = self.suit_colors.get(self.suit, (0, 0, 0, 1))
         
-        # Компактні шрифти
         font_side = sp(14)
         font_center = sp(36)
+        
+        # ВИПРАВЛЕННЯ: Використовуємо шрифт DejaVuSans, який підтримує спецсимволи
 
-        # Кутові індикатори (Rank + Suit)
+        # 1. Кутовий індикатор
         self.add_widget(Label(
-            text=f"{self.rank}\n{symbol}", font_size=font_side, bold=True, color=color,
-            size_hint=(None, None), size=(dp(30), dp(40)),
-            pos_hint={'x': 0.02, 'top': 0.98}, halign='center'
+            text=f"{self.rank}\n{symbol}", 
+            font_size=font_side, 
+            bold=True, 
+            color=color,
+            size_hint=(None, None), 
+            size=(dp(30), dp(40)),
+            pos_hint={'x': 0.02, 'top': 0.98}, 
+            halign='center',
+            font_name='DejaVuSans'  # <--- ДОДАНО
         ))
 
-        # Великий символ по центру
+        # 2. Центральний символ
         self.add_widget(Label(
-            text=symbol, font_size=font_center, color=color,
-            pos_hint={'center_x': 0.5, 'center_y': 0.5}
+            text=symbol, 
+            font_size=font_center, 
+            color=color,
+            pos_hint={'center_x': 0.5, 'center_y': 0.5},
+            font_name='DejaVuSans'  # <--- ДОДАНО
         ))
 
 
@@ -271,43 +282,51 @@ class DeckWidget(ButtonBehavior, FloatLayout, Deck):
 
 class HandWidget(BoxLayout):
     max_selected = NumericProperty(1)
+    is_me = BooleanProperty(False) # <--- 1. Нова властивість: Чи це рука локального гравця
 
     def __init__(self, **kwargs):
         max_sel = kwargs.pop('max_selected', 1)
+        
+        if 'pos_hint' not in kwargs:
+            kwargs['pos_hint'] = {'center_x': 0.5}
+
         super().__init__(**kwargs)
         
         self.max_selected = max_sel
         self.orientation = 'horizontal'
         self.size_hint = (0.8, None) 
-        self.height = dp(120)  # Висота під карти 112dp + відступи
+        self.height = dp(120)
         self.padding = [dp(10), dp(5)]
-        self.spacing = dp(10)  # Початковий зазор між картами
+        self.spacing = dp(10)
         
-        self.pos_hint = {'center_x': 0.5}
-        self.bind(width=self._recalculate_spacing, children=self._recalculate_spacing)
+        self.bind(pos=self._update_cards_base_pos, width=self._recalculate_spacing, children=self._recalculate_spacing)
+
+    def _update_cards_base_pos(self, *args):
+        """Оновлює базову висоту для всіх карт в руці, коли рука рухається"""
+        for child in self.children:
+            if hasattr(child, 'base_y'):
+                # Базова висота завжди відносно поточного Y руки
+                child.base_y = self.y + self.padding[1]
+                # Якщо карта не вибрана, примусово ставимо її на місце, 
+                # щоб вона не "висіла" на старих координатах
+                if not child.selected:
+                    child.y = child.base_y
 
     def _recalculate_spacing(self, *args):
+        # (Цей метод залишаємо без змін, він був правильний)
         n_cards = len(self.children)
         if n_cards <= 1:
             self.spacing = dp(10)
             return
             
-        card_width = dp(80) # Нова ширина карти
-        # Доступна ширина всередині контейнера
+        card_width = dp(80)
         available_width = self.width - (self.padding[0] * 2)
-        
-        # 1. Рахуємо, скільки місця займуть карти з комфортним зазором 10dp
         ideal_width = (n_cards * card_width) + ((n_cards - 1) * dp(10))
         
         if ideal_width <= available_width:
-            # Місця багато — карти стоять вільно
             self.spacing = dp(10)
         else:
-            # Місця замало — вираховуємо від'ємний spacing для рівномірного накладання
-            # Формула гарантує, що перша і остання карти будуть чітко по краях контейнера
             overlap_spacing = (available_width - (n_cards * card_width)) / (n_cards - 1)
-            
-            # Захист: spacing не може бути меншим за ширину карти (щоб не розвернулись)
             self.spacing = max(overlap_spacing, -card_width + dp(20))
 
     def add_card(self, card_widget):
@@ -316,31 +335,40 @@ class HandWidget(BoxLayout):
             card_widget.parent.remove_widget(card_widget)
             
         card_widget.bind(on_release=self.on_card_click)
+        
+        # Скидаємо будь-які прив'язки позиції, щоб BoxLayout керував картою
+        card_widget.pos_hint = {}
+        card_widget.size_hint = (None, None)
+        
         self.add_widget(card_widget)
-        # Скидаємо size_hint, щоб BoxLayout міг керувати розміром, 
-        # або залишаємо None для фіксованого розміру:
-        card_widget.size_hint = (None, None) 
+        
+        # Встановлюємо початкове значення base_y
         card_widget.base_y = self.y + self.padding[1]
 
     def on_card_click(self, clicked_card):
         """Логіка вибору карт"""
+        
+        # --- 2. ГОЛОВНА ПЕРЕВІРКА ---
+        if not self.is_me:
+            # Якщо це не моя рука — ігноруємо клік.
+            # Карта не виділиться, анімації підйому не буде.
+            return 
+        # ---------------------------
+
         if clicked_card.selected:
             clicked_card.selected = False
             return
 
-        # Рахуємо вже вибрані карти
         selected_cards = [c for c in self.children if getattr(c, 'selected', False)]
 
         if len(selected_cards) < self.max_selected:
             clicked_card.selected = True
         else:
-            # Якщо ліміт 1 — перемикаємо на нову
             if self.max_selected == 1:
                 for c in selected_cards:
                     c.selected = False
                 clicked_card.selected = True
             else:
-                # Якщо ліміт більше 1 і він вичерпаний — нічого не робимо
                 print(f"Досягнуто ліміт вибору: {self.max_selected}")
 
     def play_selected_cards(self, table_widget):
@@ -401,10 +429,7 @@ class HandWidget(BoxLayout):
         return played_cards
     
     def remove_card(self, card_widget):
-        """Видаляє карту зBoxLayout руки"""
-        # Відписуємо від логіки руки
         card_widget.unbind(on_release=self.on_card_click)
-        # Видаляємо фізично з контейнера
         self.remove_widget(card_widget)
 
     def on_selected_change(self, instance, value):
