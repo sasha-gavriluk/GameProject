@@ -1,419 +1,410 @@
-import asyncio
-from kivy.graphics import Color, Rectangle
-from kivy.utils import get_color_from_hex
-from kivy.metrics import dp
+import math
 from kivy.uix.floatlayout import FloatLayout
-from kivy.uix.boxlayout import BoxLayout
-from kivy.animation import Animation
-from kivy.uix.popup import Popup
-from kivy.uix.label import Label
+from kivy.graphics import Color, Rectangle
+from kivy.clock import Clock
+from kivy.metrics import dp
 
-from gui.utils.Component import HandWidget, DeckWidget, CardWidget, GameButton
+# Імпорт нашого нового конфігу
+from gui.config.Configs import VisualConfig, WarPreset, DurakPreset
+
+from gui.utils.Component import HandWidget, DeckWidget, CardWidget, GameButton, BattleAreaWidget
 from gui.utils.AnimationManager import AnimationManager
-from utils.engine import GameEngine, Player
-from utils.cards import Deck
-from utils.rule.rules_war import WarRules
 
-ASPEED = 0.11  # Швидкість анімації роздачі карт
+# gui/utils/VisualEngine.py
 
-class PlayerVisual:
-    def __init__(self, root_layout, logic_player, pos_hint, is_me=False):
-        self.logic = logic_player
-        self.is_me = is_me
-        self.widget = HandWidget(pos_hint=pos_hint)
-        self.widget.is_me = is_me 
-        self.widget.max_selected = 1 
-        root_layout.add_widget(self.widget)
+class VisualEngine(FloatLayout):
+    def __init__(self, **kwargs):
+        self.game_config = kwargs.pop('config', {})
+        self.game_type = kwargs.pop('game_type', 'durak')
+        
+        super().__init__(**kwargs)
+        
+        presets = {"durak": DurakPreset(), "war": WarPreset()}
+        self.current_preset = presets.get(self.game_type, DurakPreset())
 
-    def add_card_widget(self, card_widget):
-        self.widget.add_card(card_widget)
-        if not self.is_me:
-            card_widget.is_face_up = False
-        else:
-            card_widget.is_face_up = True
-            
-    def get_selected_card(self):
-        for child in self.widget.children:
-            if getattr(child, 'selected', False):
-                return child
-        return None
-
-
-class VisualEngine:
-    def __init__(self, root_layout):
-        self.root = root_layout
-        self.game_engine = None
-        self.players = [] 
-        self.zones = {} 
         self.bg_rect = None
-        self.deck_widget = None
-        self.action_buttons = [] # Список кнопок
+        self.players = []
+        self.deck = None
+        self.trump_card = None
+        self.cards_on_table = []
+
+        self.battle_zone = BattleAreaWidget()
+        self.add_widget(self.battle_zone)
+        
+        self.create_table()
+        Clock.schedule_once(self.setup_table_by_preset, 0.1)
+        self.bind(size=self.update_layout, pos=self.update_layout)
 
     def create_table(self):
-        # Цей метод можна викликати один раз при старті, 
-        # бо фон не треба перестворювати
-        if self.bg_rect: return 
-        
-        with self.root.canvas.before:
-            Color(*get_color_from_hex('#27ae60'))
-            self.bg_rect = Rectangle(size=self.root.size, pos=self.root.pos)
-        self.root.bind(size=self._update_bg, pos=self._update_bg)
+        with self.canvas.before:
+            Color(*VisualConfig.TABLE_COLOR)
+            self.bg_rect = Rectangle(size=self.size, pos=self.pos)
 
-    def _update_bg(self, instance, value):
-        if self.bg_rect:
-            self.bg_rect.size = instance.size
-            self.bg_rect.pos = instance.pos
+    def setup_table_by_preset(self, dt):
+        """
+        Початкове налаштування столу: створення гравців, колоди та закритих карт.
+        """
+        print(f"VisualEngine: Налаштування столу для гри {self.current_preset.name}")
+        self.players = []
 
-    def reset_game(self):
-        """Очищає стіл від попередньої гри"""
-        # 1. Видаляємо візуальних гравців (руки)
-        for p in self.players:
-            if p.widget.parent:
-                p.widget.parent.remove_widget(p.widget)
-        self.players.clear()
+        # 1. Додаємо гравців (Герой + Боти)
+        self.add_player("Я", "hero", is_main=True)
+        for i in range(1, self.current_preset.default_players):
+            self.add_player(f"Бот {i}", f"bot_{i}", is_main=False)
 
-        # 2. Видаляємо зони столу
-        for zone in self.zones.values():
-            if zone.parent:
-                zone.parent.remove_widget(zone)
-        self.zones.clear()
+        # 2. Розраховуємо ПОЧАТКОВУ позицію колоди (можна змінити офсети в Configs)
+        target_deck_center = (
+            self.center_x - VisualConfig.DECK_OFFSET_X,
+            self.center_y + VisualConfig.DECK_OFFSET_Y
+        )
 
-        # 3. Видаляємо колоду
-        if self.deck_widget and self.deck_widget.parent:
-            self.deck_widget.parent.remove_widget(self.deck_widget)
-        self.deck_widget = None
+        # 3. Створюємо колоду
+        self.deck = DeckWidget()
+        self.deck.shuffle()
+        self.deck.center = target_deck_center
 
-        # 4. Видаляємо кнопки
-        for btn in self.action_buttons:
-            if btn.parent:
-                btn.parent.remove_widget(btn)
-        self.action_buttons.clear()
-
-        # 5. Очищаємо будь-які карти, що могли зависнути на root
-        cards_on_root = [w for w in self.root.children if isinstance(w, CardWidget)]
-        for c in cards_on_root:
-            self.root.remove_widget(c)
-
-    def setup_game(self, game_type, player_names, exit_callback=None, **rule_params):
-        # 1. Очищення
-        self.reset_game()
-        
-        # --- ЗБЕРІГАЄМО CALLBACK ---
-        self.exit_callback = exit_callback 
-        
-        print(f"--- Setting up game: {game_type} ---")
-        
-        rules = None
-        layout_func = None
-
-        if game_type == "WAR":
-            rules = WarRules(**rule_params)
-            layout_func = self._layout_war
+        # 4. Створюємо козир (спочатку закритий і точно під колодою)
+        if self.current_preset.show_trump:
+            real_trump = self.deck.cards.pop(0) # Беремо реальну карту
+            self.deck.update_count()
+            
+            self.trump_card = CardWidget(
+                suit=real_trump.suit, 
+                rank=real_trump.rank, 
+                is_face_up=False, # ЗАКРИТИЙ на старті
+                center=target_deck_center
+            )
+            self.add_widget(self.trump_card)
+            self.add_widget(self.deck)
         else:
-            print(f"Unknown game type: {game_type}")
+            self.add_widget(self.deck)
+
+        # 5. Додаємо кнопки та оновлюємо розмітку
+        self.setup_game_buttons()
+        self.update_layout()
+        
+        # 6. Запускаємо роздачу (пауза 0.5 сек)
+        Clock.schedule_once(self.start_dealing_process, 0.5)
+
+    def start_dealing_process(self, dt):
+        """Формує чергу роздачі згідно з пресетом"""
+        preset = self.current_preset
+        if not self.deck: return
+
+        # Визначаємо кількість карт для кожного
+        if preset.deal_type == "equal":
+            cards_per_p = len(self.deck.cards) // len(self.players)
+        else:
+            cards_per_p = preset.cards_per_player or 6
+
+        deal_queue = []
+        for _ in range(cards_per_p):
+            for player in self.players:
+                deal_queue.append(player)
+        
+        self._deal_next_card(deal_queue)
+
+    def start_dealing_animation(self, dt):
+        """Тут буде викликатися логіка роздачі карт"""
+        print(f"Початок анімації роздачі: {self.current_preset.deal_type}")
+        # Для тесту просто додамо по пару карт кожному
+        for player in self.players:
+            for _ in range(self.current_preset.cards_per_player or 3):
+                card = CardWidget(suit='spades', rank='10')
+                player.add_card(card)
+
+    def add_player(self, name, p_id, is_main=False):
+        hand = HandWidget(name=name, player_id=p_id, is_main_player=is_main)
+        self.add_widget(hand)
+        self.players.append(hand)
+        return hand
+
+    def update_layout(self, *args):
+        """
+        Повне оновлення інтерфейсу при зміні розміру вікна або стану гри:
+        1. Супротивники в ряд зверху.
+        2. Зона бою (Battle Area) по центру (згідно з BATTLE_AREA_Y_RATIO).
+        3. Карти на столі прив'язані до центру зони бою.
+        4. Колода зліва (в грі) або в центрі (на старті).
+        """
+        # Оновлення фону
+        if self.bg_rect:
+            self.bg_rect.pos = self.pos
+            self.bg_rect.size = self.size
+            
+        if not self.players:
             return
 
-        self.game_engine = GameEngine(rules)
-        self._setup_players(player_names)
-        
-        self._create_common_ui(exit_callback)
+        # --- 1. РОЗМІЩЕННЯ ГРАВЦІВ ---
+        main_player = next((p for p in self.players if p.is_main_player), None)
+        opponents = [p for p in self.players if not p.is_main_player]
 
-        if layout_func:
-            layout_func()
+        # Головний гравець (Герой)
+        if main_player:
+            main_player.width = min(self.width * VisualConfig.HERO_WIDTH_PERCENT, VisualConfig.HERO_MAX_WIDTH)
+            main_player.center_x = self.center_x
+            main_player.y = VisualConfig.HERO_BOTTOM_OFFSET
 
-    def _show_game_over_popup(self, title_text, message_text, color_hex):
-        """Показує вікно результату гри"""
-        
-        # Контейнер для вмісту попапу
-        content = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(20))
-        
-        # Повідомлення
-        lbl_msg = Label(
-            text=message_text, 
-            font_size=dp(20), 
-            color=get_color_from_hex(color_hex),
-            halign='center',
-            valign='middle'
-        )
-        content.add_widget(lbl_msg)
-        
-        # Кнопка виходу
-        btn_exit = GameButton(text="В меню", size_hint=(1, None), height=dp(50))
-        content.add_widget(btn_exit)
-        
-        # Створюємо попап
-        popup = Popup(
-            title=title_text,
-            content=content,
-            size_hint=(None, None),
-            size=(dp(300), dp(250)),
-            auto_dismiss=False # Забороняємо закривати кліком повз
-        )
-        
-        # Прив'язуємо кнопку до виходу
-        def on_exit_click(instance):
-            popup.dismiss()
-            if self.exit_callback:
-                self.exit_callback()
+        # Супротивники (Боти) - в ряд при самому верху
+        if opponents:
+            n = len(opponents)
+            top_margin = dp(10)
+            opp_slot_width = dp(140) 
+            total_row_width = n * opp_slot_width
+            
+            if total_row_width > self.width * 0.95:
+                opp_slot_width = (self.width * 0.95) / n
+                total_row_width = self.width * 0.95
+
+            start_x = self.center_x - (total_row_width / 2) + (opp_slot_width / 2)
+            for i, opp in enumerate(opponents):
+                opp.center_x = start_x + (i * opp_slot_width)
+                opp.top = self.height - top_margin
+
+        # --- 2. РОЗМІЩЕННЯ ЗОНИ БОЮ ТА КАРТ НА СТОЛІ ---
+        if hasattr(self, 'battle_zone'):
+            # Встановлюємо розміри зони бою
+            self.battle_zone.width = self.width * 0.6
+            self.battle_zone.center_x = self.center_x
+            # Центруємо по висоті згідно з конфігом (наприклад, 0.42)
+            self.battle_zone.center_y = self.height * VisualConfig.BATTLE_AREA_Y_RATIO
+
+            # Оновлюємо позиції всіх карт, які вже лежать на столі (cards_on_table)
+            # Це важливо, щоб при зміні розміру вікна карти не "тікали" від зони
+            card_spacing = dp(45)
+            # Початкова точка X всередині зони
+            start_table_x = self.battle_zone.x + dp(60) 
+            
+            for i, card in enumerate(self.cards_on_table):
+                # Карта завжди по центру зони бою по вертикалі
+                card.center_y = self.battle_zone.center_y
+                # Зміщення по горизонталі (віяло на столі)
+                card.center_x = start_table_x + (i * card_spacing)
+
+        # --- 3. РОЗМІЩЕННЯ КОЛОДИ ТА КОЗИРЯ ---
+        if self.deck:
+            # Визначаємо, чи колода вже в ігровій позиції зліва
+            is_in_battle_pos = self.deck.center_x < self.width * 0.3
+            
+            if is_in_battle_pos:
+                target_y_ratio = VisualConfig.DECK_GAME_Y_RATIO
                 
-        btn_exit.bind(on_release=on_exit_click)
+                # Корекція висоти колоди, якщо рука Героя занадто широка
+                hero_left_edge = main_player.x if main_player else self.width
+                if hero_left_edge < self.width * 0.25:
+                    target_y_ratio = 0.55 
+                
+                self.deck.center_x = self.width * VisualConfig.DECK_GAME_X_RATIO
+                self.deck.center_y = self.height * target_y_ratio
+                
+                if self.trump_card:
+                    self.trump_card.center_y = self.deck.center_y
+                    self.trump_card.center_x = self.deck.center_x + dp(40)
+            else:
+                # Початкова позиція в центрі (зміщена згідно з офсетами)
+                self.deck.center_x = self.center_x - VisualConfig.DECK_OFFSET_X
+                self.deck.center_y = self.center_y + VisualConfig.DECK_OFFSET_Y
+                
+                if self.trump_card:
+                    if self.trump_card.angle == 90: # Якщо вже відкритий
+                        self.trump_card.center_y = self.deck.center_y
+                        self.trump_card.center_x = self.deck.center_x + dp(40)
+                    else: # Якщо ще закритий під колодою
+                        self.trump_card.center = self.deck.center
+
+    def setup_game_ui(self):
+        """Створює кнопки, описані в пресеті"""
+        for i, btn_text in enumerate(self.current_preset.buttons):
+            btn = GameButton(
+                text=btn_text,
+                size_hint=(None, None),
+                size=(dp(100), dp(45)),
+                # Розміщуємо кнопки в ряд над картами гравця
+                pos=(self.width/2 + (i-1)*dp(110), dp(180)) 
+            )
+            self.add_widget(btn)
+
+    def start_game_sequence(self, dt):
+        """Логіка старту залежить від пресету"""
+        print(f"Початок гри: {self.current_preset.name}")
         
-        popup.open()
-    
-    def _create_common_ui(self, exit_callback):
-        """Створює елементи інтерфейсу, спільні для всіх ігор"""
-        # Кнопка "Меню" / "Вихід" зліва зверху
-        btn_exit = GameButton(
+        # 1. Створюємо колоду
+        self.deck = DeckWidget()
+        self.add_widget(self.deck)
+        
+        # 2. Якщо гра передбачає козир - показуємо
+        if self.current_preset.show_trump:
+            self.trump_card = CardWidget(suit='hearts', rank='A')
+            self.add_widget(self.trump_card)
+            # анімація відкриття...
+            
+        # 3. Викликаємо роздачу
+        self.deal_cards()
+
+    def deal_cards(self):
+        """Роздача базується на параметрах пресету"""
+        if self.current_preset.deal_type == "equal":
+            print("Анімація: Роздача всієї колоди порівну (Війна)")
+            # Логіка для Війни...
+        elif self.current_preset.deal_type == "by_six":
+            print("Анімація: Роздача по 6 карт (Дурень)")
+            # Логіка для Дурня...
+
+    def add_common_ui(self, back_callback):
+        """Додає кнопку 'Назад'."""
+        btn_back = GameButton(
             text="<",
             size_hint=(None, None),
-            size=(dp(30), dp(50)),
+            size=(dp(40), dp(40)),
             pos_hint={'x': 0.02, 'top': 0.98}
         )
+        if back_callback:
+            btn_back.bind(on_release=lambda x: back_callback())
+        self.add_widget(btn_back)
+
+    def setup_game_buttons(self):
+        if hasattr(self, 'action_buttons'):
+            for btn in self.action_buttons: self.remove_widget(btn)
         
-        # Якщо передали функцію виходу - прив'язуємо її
-        if exit_callback:
-            btn_exit.bind(on_release=lambda x: exit_callback())
+        self.action_buttons = []
+        for btn_text in self.current_preset.buttons:
+            btn = GameButton(text=btn_text, size_hint=(None, None), size=(dp(100), dp(50)))
+            # Тут можна додати btn.bind(on_release=...) для Біти/Взяти
+            self.add_widget(btn)
+            self.action_buttons.append(btn)
+
+    def on_play_button_pressed(self, instance):
+        """Логіка натискання кнопки Хід: карти летять трохи нижче центру"""
+        hero = next((p for p in self.players if p.is_main_player), None)
+        
+        if hero and hero.selected_card:
+            card_to_play = hero.selected_card
             
-        self.root.add_widget(btn_exit)
-        self.action_buttons.append(btn_exit) # Додаємо в список, щоб видалити при reset_game
+            # 1. Визначаємо цільову позицію.
+            # Опускаємо центр на dp(50), щоб карти були ближче до гравця
+            offset_x = len(self.battle_area) * dp(35)
+            target_y = self.center_y - dp(10) # <--- Змінюємо це значення
+            
+            target_pos = (self.center_x + offset_x - dp(100), target_y)
+            
+            # 2. Скидаємо offset_y (підйом карти), щоб вона летіла "рівною"
+            card_to_play.offset_y = 0
+            
+            # 3. Переміщуємо карту з руки на стіл
+            hero.remove_card(card_to_play)
+            self.add_widget(card_to_play)
+            
+            # 4. Анімуємо політ
+            AnimationManager.animate_play_card(card_to_play, target_pos)
+            
+            self.battle_area.append(card_to_play)
+            hero.selected_card = None
 
-    def _setup_players(self, names):
-        self.game_engine.players = []
-        positions = [
-            {'center_x': 0.5, 'y': 0.02},    
-            {'center_x': 0.5, 'top': 0.98}   
-        ]
+    def play_selected_card(self, player):
+        card = player.selected_card
         
-        for i, name in enumerate(names):
-            p_logic = Player(name)
-            self.game_engine.players.append(p_logic)
-            pos = positions[i] if i < len(positions) else {'center_x': 0.5, 'center_y': 0.5}
-            p_visual = PlayerVisual(self.root, p_logic, pos, is_me=(i == 0))
-            self.players.append(p_visual)
-
-    def _layout_war(self):
-        self.deck_widget = DeckWidget(pos_hint={'center_x': 0.5, 'center_y': 0.5})
-        self.root.add_widget(self.deck_widget)
-
-        table_p = FloatLayout(size_hint=(None, None), size=(dp(100), dp(140)), 
-                              pos_hint={'center_x': 0.4, 'center_y': 0.5})
-        self.root.add_widget(table_p)
-        self.zones['table_player'] = table_p
-
-        table_b = FloatLayout(size_hint=(None, None), size=(dp(100), dp(140)), 
-                              pos_hint={'center_x': 0.6, 'center_y': 0.5})
-        self.root.add_widget(table_b)
-        self.zones['table_bot'] = table_b
-
-        btn_battle = GameButton(
-            text="Бій!",
-            size_hint=(None, None),
-            size=(dp(120), dp(60)),
-            pos_hint={'right': 0.95, 'center_y': 0.5}
-        )
-        btn_battle.bind(on_release=lambda x: self.on_war_battle_click())
-        self.root.add_widget(btn_battle)
-        self.action_buttons.append(btn_battle)
-
-    # --- ЛОГІКА ХОДУ (WAR) ---
-    def on_war_battle_click(self):
-        if not self.players[0].logic.hand:
-            print("Гра закінчена!")
-            return
-
-        player_vis = self.players[0]
-        selected_card_widget = player_vis.get_selected_card()
-
-        if not selected_card_widget:
-            self._show_warning_popup("Виберіть карту для ходу!")
-            return
-
-        asyncio.create_task(self._play_war_round(selected_card_widget))
-
-    def _show_warning_popup(self, message):
-        content = Label(text=message, font_size=dp(18))
-        popup = Popup(title='Увага', content=content, size_hint=(None, None), size=(dp(300), dp(200)))
-        popup.open()
-
-    async def _play_war_round(self, player_card_widget):
-        p_me = self.players[0]
-        p_bot = self.players[1]
-
-        # Знаходимо логічну карту
-        card_me_logic = None
-        for c in p_me.logic.hand:
-            if c.suit == player_card_widget.suit and c.rank == player_card_widget.rank:
-                card_me_logic = c
-                break
+        # 1. Скидаємо візуальні ефекти
+        card.offset_y = 0
+        card.selected = False
         
-        if not card_me_logic: return
-        p_me.logic.hand.remove(card_me_logic)
+        # --- НОВИЙ РЯДОК: Вимикаємо інтерактивність карти ---
+        card.disabled = True 
+        # ----------------------------------------------------
 
-        if not p_bot.logic.hand: return
-        card_bot_logic = p_bot.logic.hand.pop(0)
-
-        await asyncio.gather(
-            self._animate_play_specific_card(p_me, player_card_widget, self.zones['table_player']),
-            self._animate_play_bot_card(p_bot, card_bot_logic, self.zones['table_bot'])
-        )
-
-        await asyncio.sleep(1.0)
-
-        rank_values = self.game_engine.rules.ranks_values
-        val_me = rank_values.get(card_me_logic.rank, 0)
-        val_bot = rank_values.get(card_bot_logic.rank, 0)
+        target_center_y = self.battle_zone.center_y
+        card_spacing = dp(40)
+        start_x = self.battle_zone.x + dp(60)
+        target_center_x = start_x + (len(self.cards_on_table) * card_spacing)
         
-        winner = None
-        if val_me > val_bot:
-            winner = p_me
-        elif val_bot > val_me:
-            winner = p_bot
+        target_pos = (target_center_x, target_center_y)
+        
+        player.remove_card(card)
+        self.add_widget(card)
+        
+        AnimationManager.animate_play_card(card, target_pos)
+        
+        self.cards_on_table.append(card)
+        player.selected_card = None
+        self.battle_zone.active = False
+
+    def update(self, dt):
+        hero = next((p for p in self.players if p.is_main_player), None)
+        if hero:
+            # Якщо у гравця в руці піднята карта - зона бою "активується" (підсвічується)
+            self.battle_zone.active = True if hero.selected_card else False
+
+    def on_touch_down(self, touch):
+        # 1. Знаходимо головного гравця
+        hero = next((p for p in self.players if p.is_main_player), None)
+        
+        # 2. Якщо натиснули на зону бою і карта ВИБРАНА — ходимо
+        if hero and hero.selected_card and self.battle_zone.collide_point(*touch.pos):
+            self.play_selected_card(hero)
+            return True
+            
+        # Стандартна обробка натискань (наприклад, вибір карти в руці)
+        result = super().on_touch_down(touch)
+        
+        # 3. ПІСЛЯ натискання оновлюємо підсвічування зони бою
+        Clock.schedule_once(lambda dt: self.update_zone_highlight(hero), 0.05)
+        
+        return result
+
+    def update_zone_highlight(self, hero):
+        """Вмикає підсвічування зони, якщо карта піднята"""
+        if hero and hero.selected_card:
+            self.battle_zone.active = True
         else:
-            winner = p_me 
+            self.battle_zone.active = False
 
-        winner.logic.hand.extend([card_me_logic, card_bot_logic])
+    def _deal_next_card(self, queue):
 
-        await asyncio.gather(
-            self._animate_collect_card(card_me_logic, winner),
-            self._animate_collect_card(card_bot_logic, winner)
-        )
+        """Рекурсивна роздача: по одній карті за раз"""
+        if not queue or not self.deck.cards:
+            print("VisualEngine: Роздача завершена")
+            # ЛОГІКА ПІСЛЯ РОЗДАЧІ: Козир та від'їзд колоди
+            if self.trump_card:
+                Clock.schedule_once(self.reveal_trump_after_deal, 0.3)
+                Clock.schedule_once(self.move_deck_to_battle_position, 1.3)
+            else:
+                Clock.schedule_once(self.move_deck_to_battle_position, 0.5)
+            return
 
-        me_lost = (len(p_me.logic.hand) == 0)
-        bot_lost = (len(p_bot.logic.hand) == 0)
+        target_player = queue.pop(0)
+        logical_card = self.deck.cards.pop()
+        self.deck.update_count()
 
-        if me_lost:
-            self._show_game_over_popup(
-                title_text="ПОРАЗКА",
-                message_text="У вас закінчились карти!\nБот переміг.",
-                color_hex="#e74c3c" # Червоний
-            )
-        elif bot_lost:
-            self._show_game_over_popup(
-                title_text="ПЕРЕМОГА!",
-                message_text="Ви забрали всі карти!\nВітаємо!",
-                color_hex="#f1c40f" # Золотий/Жовтий
-            )
-
-    # --- Допоміжні методи анімації ---
-    async def _animate_play_specific_card(self, player_visual, card_widget, target_zone):
-        player_visual.widget.remove_card(card_widget)
-        window_pos = card_widget.to_window(*card_widget.pos)
-        self.root.add_widget(card_widget)
-        card_widget.pos = self.root.to_widget(*window_pos)
-        
-        target_pos = (
-            target_zone.center_x - card_widget.width / 2,
-            target_zone.center_y - card_widget.height / 2
+        # Створюємо віджет на місці колоди
+        new_card = CardWidget(
+            suit=logical_card.suit, rank=logical_card.rank,
+            center=self.deck.center, is_face_up=target_player.is_main_player
         )
         
-        anim_done = asyncio.Event()
-        card_widget.selected = False
-        card_widget.is_face_up = True
-        
-        AnimationManager.animate_card_to_table(
-            card_widget, target_pos, duration=0.4, on_complete=lambda *args: anim_done.set()
-        )
-        await anim_done.wait()
-        
-        self.root.remove_widget(card_widget)
-        target_zone.add_widget(card_widget)
-        card_widget.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
+        if not target_player.is_main_player:
+            new_card.disabled = True
 
-    async def _animate_play_bot_card(self, bot_visual, card_logic, target_zone):
-        card_widget = None
-        for w in bot_visual.widget.children:
-            if w.suit == card_logic.suit and w.rank == card_logic.rank:
-                card_widget = w
-                break
-        
-        if not card_widget and bot_visual.widget.children:
-            card_widget = bot_visual.widget.children[-1]
+        self.add_widget(new_card)
 
-        if card_widget:
-            await self._animate_play_specific_card(bot_visual, card_widget, target_zone)
+        def on_fly_complete(anim, widget):
+            self.remove_widget(widget)
+            target_player.add_card(widget)
+            # Наступна карта ТІЛЬКИ після завершення анімації попередньої
+            self._deal_next_card(queue)
 
-    async def _animate_collect_card(self, card_logic, winner_visual):
-        card_widget = None
-        for zone in self.zones.values():
-            for child in zone.children:
-                if isinstance(child, CardWidget) and child.suit == card_logic.suit and child.rank == card_logic.rank:
-                    card_widget = child
-                    break
-            if card_widget: break
-            
-        if not card_widget: return
-
-        if card_widget.parent:
-            win_pos = card_widget.to_window(*card_widget.pos)
-            card_widget.parent.remove_widget(card_widget)
-            self.root.add_widget(card_widget)
-            card_widget.pos = self.root.to_widget(*win_pos)
-            card_widget.pos_hint = {}
-
-        hand_w = winner_visual.widget
-        target_pos = (
-            hand_w.x + hand_w.width, 
-            hand_w.center_y - card_widget.height / 2
+        # Використовуємо AnimationManager для польоту
+        AnimationManager.animate_deal_to_player(
+            new_card, target_player, 
+            duration=VisualConfig.DEAL_SPEED, 
+            on_complete=on_fly_complete
         )
 
-        anim_done = asyncio.Event()
-        AnimationManager.animate_card_to_table(
-            card_widget, target_pos, duration=0.5, on_complete=lambda *args: anim_done.set()
-        )
-        await anim_done.wait()
+    def reveal_trump_after_deal(self, dt):
+        if self.trump_card:
+            self.trump_card.is_face_up = True
+            AnimationManager.animate_trump_reveal(self.trump_card, self.deck)
 
-        self.root.remove_widget(card_widget)
-        winner_visual.add_card_widget(card_widget)
-
-    async def start_dealing_phase(self):
-        if not self.deck_widget: return
-        logic_deck = Deck()
-        logic_deck.shuffle()
-        self.deck_widget.cards = logic_deck.cards[:] 
-        self.deck_widget.update_count()
-
-        cards_to_deal = self.game_engine.rules.initial_cards_count or 6
-        for _ in range(cards_to_deal):
-            for player_visual in self.players:
-                card_data = logic_deck.deal()
-                if not card_data: break 
-                player_visual.logic.receive_card(card_data)
-                self.deck_widget.cards = logic_deck.cards[:]
-                self.deck_widget.update_count()
-                await self._animate_deal_flight(card_data, player_visual)
-
-        self.deck_widget.cards = logic_deck.cards
-        self.deck_widget.update_count()
-        await self._move_deck_to_side()
-
-    async def _move_deck_to_side(self):
-        self.deck_widget.pos_hint = {}
-        target_x = self.root.width * 0.15 - self.deck_widget.width / 2
-        target_y = self.root.height * 0.5 - self.deck_widget.height / 2
-        anim = Animation(pos=(target_x, target_y), duration=0.8, t='in_out_cubic')
-        anim.start(self.deck_widget)
-        await asyncio.sleep(0.8)
-
-    async def _animate_deal_flight(self, card_data, target_player):
-        card_widget = CardWidget(suit=card_data.suit, rank=card_data.rank)
-        self.root.add_widget(card_widget)
-        deck_pos = self.deck_widget.to_window(self.deck_widget.x, self.deck_widget.y)
-        card_widget.pos = self.root.to_widget(*deck_pos)
-        
-        hand_widget = target_player.widget
-        target_pos = (
-            hand_widget.center_x - card_widget.width / 2,
-            hand_widget.center_y - card_widget.height / 2
-        )
-        card_widget.is_face_up = False 
-        card_widget.opacity = 1
-        
-        anim_done = asyncio.Event()
-        AnimationManager.animate_card_to_table(
-            card_widget, target_pos, duration=ASPEED, on_complete=lambda *args: anim_done.set()
-        )
-        await anim_done.wait()
-        
-        card_widget.pos_hint = {}
-        self.root.remove_widget(card_widget)
-        target_player.add_card_widget(card_widget)
+    def move_deck_to_battle_position(self, dt):
+        if not self.deck: return
+        target_x = self.width * VisualConfig.DECK_GAME_X_RATIO
+        target_y = self.height * VisualConfig.DECK_GAME_Y_RATIO
+        AnimationManager.animate_move_deck_to_side(self.deck, self.trump_card, (target_x, target_y))

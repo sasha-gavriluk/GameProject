@@ -10,10 +10,8 @@ class LocalGameSelectScreen(BaseScreen):
         self.add_widget(self.ui.root)
 
     def setup_ui(self):
-        # Основний контейнер
         self.ui.add("anchor_local", "AnchorLayout", anchor_x='center', anchor_y='center')
         
-        # Вертикальний список кнопок
         self.ui.add("box_local", "BoxLayout", 
                     parent="anchor_local", 
                     orientation="vertical", 
@@ -21,25 +19,33 @@ class LocalGameSelectScreen(BaseScreen):
                     size_hint=(None, None), 
                     width=dp(300))
         
-        # Заголовок
-        self.ui.add("title_local", "TitleLabel", parent="box_local", text="Ігри")
+        self.ui.add("title_local", "TitleLabel", parent="box_local", text="Оберіть гру")
         
-        # 3 кнопки ігор
+        # Кнопки ігор
         self.ui.add("btn_war", "MenuButton", parent="box_local", text="Війна")
         self.ui.add("btn_durak", "MenuButton", parent="box_local", text="Дурак")
         self.ui.add("btn_bridge", "MenuButton", parent="box_local", text="Брідж")
 
-        self.ui.set_action("btn_war", "on_release", lambda x: self.controller.switch_screen('war_game'))
+        # Налаштування дій кнопок з передачею типу гри
+        self.ui.set_action("btn_war", "on_release", 
+                           lambda x: self.start_game("WAR"))
         
+        self.ui.set_action("btn_durak", "on_release", 
+                           lambda x: self.start_game("DURAK"))
+        
+        self.ui.set_action("btn_bridge", "on_release", 
+                           lambda x: self.start_game("BRIDGE"))
+
         # Кнопка Назад
         self.ui.add("btn_back", "MenuButton", parent="box_local", text="Назад")
-        self.ui.set_action("btn_back", "on_release", lambda x: self.controller.switch_screen('main_menu'))
+        self.ui.set_action("btn_back", "on_release", 
+                           lambda x: self.controller.switch_screen('main_menu'))
         
-        # Тут можна додати обробники для кнопок ігор, коли вони будуть готові
-        # self.ui.set_action("btn_war", "on_release", ...)
-
         self.ui.build()
         
-        # Автоматична висота для боксу
         box = self.ui.registry["box_local"]
         box.bind(minimum_height=box.setter('height'))
+
+    def start_game(self, game_type):
+        # Викликаємо оновлений switch_screen з параметром game_type
+        self.controller.switch_screen('play_game', game_type=game_type)

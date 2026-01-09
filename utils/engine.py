@@ -1,18 +1,25 @@
 # Code/utils/engine.py
-class Player: 
-    def __init__(self, name):
+class Player:
+    def __init__(self, name, player_id=None, **kwargs):
+        # Викликаємо super, щоб передати керування далі по ланцюжку (до object або інших класів)
+        super().__init__(**kwargs)
         self.name = name
+        self.player_id = player_id or name
         self.hand = []
-        self.score = 0
+        self.is_attacker = False
 
-    def receive_card(self, card):
+    def add_card(self, card):
         self.hand.append(card)
 
-    def clear_hand(self):
-        self.hand = []
+    def remove_card(self, card):
+        if card in self.hand:
+            self.hand.remove(card)
+
+    def has_cards(self):
+        return len(self.hand) > 0
 
     def __repr__(self):
-        return f"Гравець {self.name} (Карти: {self.hand})"
+        return f"Player(id={self.player_id}, name={self.name}, cards={len(self.hand)})"
 
 class GameRules:
     """
