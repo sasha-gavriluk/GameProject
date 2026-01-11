@@ -1,5 +1,5 @@
 from kivy.metrics import dp
-from gui.sreen.BaseScreen import BaseScreen
+from gui.sсreen.BaseScreen import BaseScreen
 
 class LocalGameSelectScreen(BaseScreen):
     def __init__(self, ui_manager, controller, **kwargs):

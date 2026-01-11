@@ -3,7 +3,7 @@ import asyncio
 from kivy.metrics import dp
 
 from gui.utils.GameSettings import game_settings
-from gui.sreen.BaseScreen import BaseScreen
+from gui.sсreen.BaseScreen import BaseScreen
 from gui.NetworkBridge import net
 
 class AuthScreen(BaseScreen):

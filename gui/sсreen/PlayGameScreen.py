@@ -1,5 +1,5 @@
 from kivy.clock import Clock
-from gui.sreen.BaseScreen import BaseScreen
+from gui.sсreen.BaseScreen import BaseScreen
 from gui.utils.VisualEngine import VisualEngine
 
 # Імпортуємо наш новий адаптер (який ми створили раніше)

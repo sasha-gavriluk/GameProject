@@ -7,7 +7,7 @@ from gui.utils.Component import GameTextInput, MenuButton
 
 from gui.NetworkBridge import net
 
-from gui.sreen.BaseScreen import BaseScreen
+from gui.sсreen.BaseScreen import BaseScreen
 
 # --- ЕКРАН ЛОБІ (Оновлений) ---
 class LobbyScreen(BaseScreen):

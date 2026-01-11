@@ -1,7 +1,7 @@
 import asyncio
 from kivy.metrics import dp
 from gui.NetworkBridge import net
-from gui.sreen.BaseScreen import BaseScreen
+from gui.sсreen.BaseScreen import BaseScreen
 from gui.utils.GameSettings import game_settings
 
 class MainMenuScreen(BaseScreen):
