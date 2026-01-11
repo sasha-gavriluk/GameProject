@@ -1,5 +1,5 @@
 import asyncio
-from kivy.metrics import dp
+from gui.config.Configs import sdp, responsive_metrics
 from gui.NetworkBridge import net
 from gui.sreen.BaseScreen import BaseScreen
 from gui.utils.GameSettings import game_settings
@@ -18,9 +18,9 @@ class MainMenuScreen(BaseScreen):
         self.ui.add("box", "BoxLayout", 
                     parent="anchor", 
                     orientation="vertical", 
-                    spacing=dp(20), 
+                    spacing=sdp(20), 
                     size_hint=(None, None), 
-                    width=dp(300))
+                    width=sdp(300))
         
         self.ui.add("title", "TitleLabel", parent="box", text="CARD GAME")
         
@@ -40,6 +40,14 @@ class MainMenuScreen(BaseScreen):
         
         box = self.ui.registry["box"]
         box.bind(minimum_height=box.setter('height'))
+        self._bind_box_width(box)
+
+    def _bind_box_width(self, box):
+        def _update_box_width(*_):
+            box.width = min(sdp(360), self.width * 0.9)
+        self.bind(size=_update_box_width)
+        responsive_metrics.bind(scale=lambda *_: _update_box_width())
+        _update_box_width()
 
     def check_online_access(self, instance):
         

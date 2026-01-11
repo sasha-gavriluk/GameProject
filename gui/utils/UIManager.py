@@ -18,6 +18,7 @@ from kivy.uix.recycleboxlayout import RecycleBoxLayout
 from kivy.uix.spinner import Spinner
 from kivy.animation import Animation
 from kivy.uix.togglebutton import ToggleButton
+from kivy.core.window import Window
 
 from gui.utils.StyleManager import StyleManager, IconButton, GridButton
 from gui.utils.Component import MenuButton, TitleLabel, GameButton, GameTextInput, DeckWidget, CardWidget, HandWidget, TableWidget
@@ -106,7 +107,7 @@ class UIManager:
         "TableWidget": TableWidget,
     }
 
-    def __init__(self, grid_size=(100, 100), canvas_size=(800, 600)):
+    def __init__(self, grid_size=(100, 100), canvas_size=None):
         self.root = FloatLayout()
         self.registry = {}
 
@@ -124,8 +125,10 @@ class UIManager:
         self.actions = {}
         self.sizes = {}
         self.grid_size = grid_size
-        self.canvas_width = 800
-        self.canvas_height = 600
+        if canvas_size is None:
+            canvas_size = (Window.width, Window.height)
+        self.canvas_width = canvas_size[0]
+        self.canvas_height = canvas_size[1]
         self._flow_x = 0
         self._flow_y = 0
         self._flow_row_height = 0
@@ -760,4 +763,3 @@ class DynamicWidgetManager:
             self.style_manager.decorate(widget, style_class if isinstance(style_class, str) else style_props)
 
         return widget
-

@@ -8,13 +8,12 @@ from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.animation import Animation
 
-from kivy.metrics import dp, sp
 from kivy.utils import get_color_from_hex
 from kivy.properties import StringProperty, BooleanProperty, NumericProperty, ObjectProperty, ListProperty
 from kivy.core.text import Label as CoreLabel
 from kivy.graphics import Color, RoundedRectangle, Line
 
-from gui.config.Configs import VisualConfig
+from gui.config.Configs import VisualConfig, sdp, ssp, responsive_metrics
 from gui.utils.AnimationManager import AnimationManager
 from utils.cards import Card, Deck
 from utils.engine import Player
@@ -28,11 +27,19 @@ class GameButton(Button):
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.base_font_size = 18
         self.background_normal = '' 
         self.background_color = get_color_from_hex('#3498db') # Світло-синій
         self.color = (1, 1, 1, 1) # Білий текст
-        self.font_size = sp(18)
         self.bold = True
+        self._apply_metrics()
+        responsive_metrics.bind(scale=self._on_scale_change)
+
+    def _on_scale_change(self, *args):
+        self._apply_metrics()
+
+    def _apply_metrics(self):
+        self.font_size = ssp(self.base_font_size)
 
 class MenuButton(GameButton):
     """
@@ -42,8 +49,13 @@ class MenuButton(GameButton):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.size_hint_y = None
-        self.height = dp(60) # Фіксована висота
+        self.base_height = 60
+        self._apply_metrics()
         self.background_color = get_color_from_hex('#2c3e50') # Темно-синій
+
+    def _apply_metrics(self):
+        super()._apply_metrics()
+        self.height = sdp(self.base_height)
 
 class TitleLabel(Label):
     """
@@ -51,12 +63,23 @@ class TitleLabel(Label):
     Великий шрифт, жовтий колір.
     """
     def __init__(self, **kwargs):
+        initial_font_size = kwargs.get("font_size", 40)
+        initial_height = kwargs.get("height", 100)
         super().__init__(**kwargs)
-        self.font_size = sp(40)
+        self.base_font_size = initial_font_size if isinstance(initial_font_size, (int, float)) else 40
         self.bold = True
         self.color = get_color_from_hex('#f1c40f') # Жовтий
         self.size_hint_y = None
-        self.height = dp(100)
+        self.base_height = initial_height if isinstance(initial_height, (int, float)) else 100
+        self._apply_metrics()
+        responsive_metrics.bind(scale=self._on_scale_change)
+
+    def _on_scale_change(self, *args):
+        self._apply_metrics()
+
+    def _apply_metrics(self):
+        self.font_size = ssp(self.base_font_size)
+        self.height = sdp(self.base_height)
 
 class GameTextInput(TextInput):
     """
@@ -65,13 +88,22 @@ class GameTextInput(TextInput):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.size_hint_y = None
-        self.height = dp(50)       # Фіксована висота, зручна для пальця/миші
+        self.base_height = 50
+        self.height = sdp(self.base_height)       # Фіксована висота, зручна для пальця/миші
         self.multiline = False     # Це однорядкове поле
-        self.font_size = sp(18)
-        self.padding = [dp(10), dp(10), dp(10), dp(10)] # Відступи тексту всередині, щоб було по центру
+        self.base_font_size = 18
+        self.base_padding = 10
+        self.font_size = ssp(self.base_font_size)
+        self.padding = [sdp(self.base_padding)] * 4 # Відступи тексту всередині, щоб було по центру
         self.background_normal = '' # Можна прибрати стандартний фон
         self.background_color = (0.9, 0.9, 0.9, 1) # Світло-сірий фон
         self.foreground_color = (0, 0, 0, 1) # Чорний текст
+        responsive_metrics.bind(scale=self._on_scale_change)
+
+    def _on_scale_change(self, *args):
+        self.height = sdp(self.base_height)
+        self.font_size = ssp(self.base_font_size)
+        self.padding = [sdp(self.base_padding)] * 4
 
 class CardWidget(ButtonBehavior, FloatLayout, Card):
     """
@@ -95,7 +127,8 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
         
         self.is_face_up = is_face_up
         self.size_hint = (None, None)
-        self.size = (dp(80), dp(112))
+        self.base_size = (VisualConfig.CARD_WIDTH, VisualConfig.CARD_HEIGHT)
+        self.size = VisualConfig.card_size()
         self.base_y = 0 
         
         self.suit_colors = {
@@ -109,10 +142,15 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
                   suit=self.update_content, rank=self.update_content, 
                   is_face_up=self.update_content, selected=self.on_selected_change,
                   angle=self.update_canvas, offset_y=self.update_canvas)
+        responsive_metrics.bind(scale=self._on_scale_change)
+        self.update_canvas()
+
+    def _on_scale_change(self, *args):
+        self.size = (sdp(self.base_size[0]), sdp(self.base_size[1]))
         self.update_canvas()
 
     def on_selected_change(self, instance, value):
-        target_y = self.base_y + dp(30) if value else self.base_y
+        target_y = self.base_y + sdp(30) if value else self.base_y
         anim = Animation(y=target_y, duration=0.15, t='out_quad')
         anim.start(self)
         self.update_canvas()
@@ -148,11 +186,11 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
             if self.selected:
                 Color(1, 0.8, 0, 0.4)
                 # Зміщуємо Line на dy
-                Line(rounded_rectangle=(-dp(3), dy - dp(3), self.width + dp(6), self.height + dp(6), dp(12)), width=dp(3))
+                Line(rounded_rectangle=(-sdp(3), dy - sdp(3), self.width + sdp(6), self.height + sdp(6), sdp(12)), width=sdp(3))
 
             # 3. Тінь (малюємо під картою)
             Color(0, 0, 0, 0.2)
-            RoundedRectangle(pos=(dp(2), dy - dp(2)), size=self.size, radius=[dp(10)])
+            RoundedRectangle(pos=(sdp(2), dy - sdp(2)), size=self.size, radius=[sdp(10)])
 
             # 4. Основний фон карти
             if self.is_face_up:
@@ -161,15 +199,15 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
                 Color(*get_color_from_hex('#34495e'))
             
             # Малюємо прямокутник фону з урахуванням dy
-            RoundedRectangle(pos=(0, dy), size=self.size, radius=[dp(10)])
+            RoundedRectangle(pos=(0, dy), size=self.size, radius=[sdp(10)])
             
             # 5. Рамка (обводка)
             if self.selected:
                 Color(*get_color_from_hex('#f1c40f'))
-                Line(rounded_rectangle=(0, dy, self.width, self.height, dp(10)), width=dp(2.5))
+                Line(rounded_rectangle=(0, dy, self.width, self.height, sdp(10)), width=sdp(2.5))
             else:
                 Color(0, 0, 0, 0.15)
-                Line(rounded_rectangle=(0, dy, self.width, self.height, dp(10)), width=dp(1))
+                Line(rounded_rectangle=(0, dy, self.width, self.height, sdp(10)), width=sdp(1))
 
             # 6. Контент лицевої сторони (Текст та Масть)
             if self.is_face_up:
@@ -180,7 +218,7 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
                 # --- Кутові текстури ---
                 corner_label = CoreLabel(
                     text=f"{self.rank}\n{symbol}", 
-                    font_size=int(sp(14)), 
+                    font_size=int(ssp(14)), 
                     bold=True, 
                     halign='center',
                     font_name='DejaVuSans'
@@ -189,7 +227,7 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
                 corner_texture = corner_label.texture
 
                 if corner_texture:
-                    pad = dp(5)
+                    pad = sdp(5)
                     # Верхній лівий (додаємо dy до y)
                     Rectangle(
                         texture=corner_texture, 
@@ -205,7 +243,7 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
                     )
 
                 # --- Центральна масть ---
-                center_label = CoreLabel(text=symbol, font_size=int(sp(36)), font_name='DejaVuSans')
+                center_label = CoreLabel(text=symbol, font_size=int(ssp(36)), font_name='DejaVuSans')
                 center_label.refresh()
                 center_texture = center_label.texture
                 if center_texture:
@@ -218,7 +256,7 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
             # 7. Декор сорочки (якщо карта закрита)
             else:
                 Color(1, 1, 1, 0.1)
-                Line(rounded_rectangle=(dp(10), dy + dp(10), self.width - dp(20), self.height - dp(20), dp(5)), width=1.5)
+                Line(rounded_rectangle=(sdp(10), dy + sdp(10), self.width - sdp(20), self.height - sdp(20), sdp(5)), width=sdp(1.5))
 
             PopMatrix()
 
@@ -226,7 +264,7 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
         # Якщо карта в руці і її намагаються опустити нижче базової лінії
         # (це зазвичай і є те саме 'просідання'), ми блокуємо це.
         if self.parent and hasattr(self.parent, 'is_main_player'):
-            base_y = self.parent.y + dp(15)
+            base_y = self.parent.y + sdp(15)
             if value < base_y and self.offset_y == 0:
                 self.y = base_y
 
@@ -251,11 +289,13 @@ class DeckWidget(ButtonBehavior, FloatLayout, Deck):
         # Ініціалізація Deck та FloatLayout
         super().__init__(**kwargs)
         self.size_hint = (None, None)
-        self.size = (dp(80), dp(112))
+        self.base_size = (VisualConfig.CARD_WIDTH, VisualConfig.CARD_HEIGHT)
+        self.size = VisualConfig.card_size()
         
         self.update_count()
         # Прив'язуємо оновлення канвасу до зміни позиції, розміру та кількості карт
         self.bind(pos=self.update_canvas, size=self.update_canvas, cards_count=self.update_canvas)
+        responsive_metrics.bind(scale=self._on_scale_change)
         self.update_canvas()
 
     def update_count(self):
@@ -277,31 +317,35 @@ class DeckWidget(ButtonBehavior, FloatLayout, Deck):
         if self.cards_count == 0:
             with self.canvas.before:
                 Color(0, 0, 0, 0.1)
-                Line(rounded_rectangle=(self.x, self.y, self.width, self.height, dp(10)), width=1, dash_offset=5)
+                Line(rounded_rectangle=(self.x, self.y, self.width, self.height, sdp(10)), width=1, dash_offset=5)
             return
 
         with self.canvas.before:
             # Малювання шарів колоди для ефекту об'єму (3 карти зверху)
-            offsets = [dp(4), dp(2), 0]
+            offsets = [sdp(4), sdp(2), 0]
             visible_layers = offsets if self.cards_count > 2 else offsets[-self.cards_count:]
             
             for i, offset in enumerate(visible_layers):
                 Color(0, 0, 0, 0.2)
-                RoundedRectangle(pos=(self.x + offset + dp(2), self.y + offset - dp(2)), 
-                                 size=self.size, radius=[dp(10)])
+                RoundedRectangle(pos=(self.x + offset + sdp(2), self.y + offset - sdp(2)), 
+                                 size=self.size, radius=[sdp(10)])
                 Color(*get_color_from_hex('#34495e')) # Колір сорочки
                 RoundedRectangle(pos=(self.x + offset, self.y + offset), 
-                                 size=self.size, radius=[dp(10)])
+                                 size=self.size, radius=[sdp(10)])
                 
                 if i == len(visible_layers) - 1: # Тільки для верхньої карти малюємо візерунок
                     Color(1, 1, 1, 0.1)
-                    Line(rounded_rectangle=(self.x + offset + dp(10), self.y + offset + dp(10), 
-                                          self.width - dp(20), self.height - dp(20), dp(5)), width=2)
+                    Line(rounded_rectangle=(self.x + offset + sdp(10), self.y + offset + sdp(10), 
+                                          self.width - sdp(20), self.height - sdp(20), sdp(5)), width=2)
 
         # Текст з кількістю карт
-        count_label = Label(text=str(self.cards_count), font_size=sp(20), bold=True, 
+        count_label = Label(text=str(self.cards_count), font_size=ssp(20), bold=True, 
                             color=(1, 1, 1, 0.5), pos_hint={'center_x': 0.5, 'center_y': 0.5})
         self.add_widget(count_label)
+
+    def _on_scale_change(self, *args):
+        self.size = (sdp(self.base_size[0]), sdp(self.base_size[1]))
+        self.update_canvas()
 
 class HandWidget(FloatLayout, Player):
     """
@@ -311,7 +355,7 @@ class HandWidget(FloatLayout, Player):
     multi_select = BooleanProperty(True) # <--- НОВА ВЛАСТИВІСТЬ (Дозволити вибір кількох)
 
     is_main_player = BooleanProperty(False)
-    spacing_x = NumericProperty(dp(40))
+    spacing_x = NumericProperty(sdp(40))
     player_name = StringProperty('')
 
     def __init__(self, name="Player", player_id=None, is_main_player=False, **kwargs):
@@ -326,21 +370,35 @@ class HandWidget(FloatLayout, Player):
         self.size_hint = (None, None)
         self.cards = [] 
         self.bg_rect = None 
+        self.base_main_size = (600, 150)
+        self.base_bot_size = (120, 160)
+        self.base_main_y = 20
+        self.base_bot_y = 0
+        self.base_bot_label_size = (40, 20)
+        self.base_bot_label_font_size = 14
 
         if self.is_main_player:
-            self.size = (dp(600), dp(150))
-            self.base_y = dp(20)
+            self.size = (sdp(self.base_main_size[0]), sdp(self.base_main_size[1]))
+            self.base_y = sdp(self.base_main_y)
         else:
-            self.size = (dp(120), dp(160))
-            self.base_y = 0
+            self.size = (sdp(self.base_bot_size[0]), sdp(self.base_bot_size[1]))
+            self.base_y = sdp(self.base_bot_y)
             self.setup_opponent_ui()
 
         self.card_count_label = None
         if not self.is_main_player and VisualConfig.SHOW_BOT_CARD_COUNT:
-            self.card_count_label = Label(text="", font_size=dp(14), color=VisualConfig.BOT_LABEL_COLOR, size_hint=(None, None), size=(dp(40), dp(20)), bold=True)
+            self.card_count_label = Label(
+                text="",
+                font_size=ssp(self.base_bot_label_font_size),
+                color=VisualConfig.BOT_LABEL_COLOR,
+                size_hint=(None, None),
+                size=(sdp(self.base_bot_label_size[0]), sdp(self.base_bot_label_size[1])),
+                bold=True,
+            )
             self.add_widget(self.card_count_label)
 
         self.bind(pos=self.update_hand_layout, size=self.update_hand_layout)
+        responsive_metrics.bind(scale=self._on_scale_change)
 
     def clean_canvas(self):
         """Очищає намальований фон (темну зону), щоб не було дублікатів"""
@@ -356,7 +414,7 @@ class HandWidget(FloatLayout, Player):
 
         with self.canvas.before:
             Color(0, 0, 0, 0.4)
-            self.bg_rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(10)])
+            self.bg_rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[sdp(10)])
         
         self.bind(pos=self.update_bg, size=self.update_bg)
 
@@ -364,10 +422,10 @@ class HandWidget(FloatLayout, Player):
         if not hasattr(self, 'lbl_name') or self.lbl_name not in self.children:
             self.lbl_name = Label(
                 text=self.name,
-                font_size=sp(12),
+                font_size=ssp(12),
                 bold=True,
                 size_hint=(1, None),
-                height=dp(20),
+                height=sdp(20),
                 pos_hint={'top': 1, 'center_x': 0.5}
             )
             self.add_widget(self.lbl_name)
@@ -389,11 +447,11 @@ class HandWidget(FloatLayout, Player):
         # Налаштування візуалу
         if not self.is_main_player:
             card_widget.is_face_up = False 
-            target_size = (dp(40), dp(56))
+            target_size = VisualConfig.small_card_size()
         else:
             # Тільки коли потрапляє в руку героя, стає відкритою
             card_widget.is_face_up = True
-            target_size = (dp(80), dp(112)) 
+            target_size = VisualConfig.card_size()
             card_widget.bind(on_touch_down=self.on_card_touch)
 
         card_widget.pos_hint = {} 
@@ -432,9 +490,9 @@ class HandWidget(FloatLayout, Player):
         
         if self.is_main_player:
             # (Логіка розрахунку ширини - без змін)
-            card_width = dp(80)
+            card_width = sdp(80)
             max_total_width = self.width * 0.95
-            ideal_step = dp(50) 
+            ideal_step = sdp(50)
             needed_width = (count - 1) * ideal_step + card_width
             if needed_width > max_total_width:
                 actual_step = max_total_width / (count - 1) if count > 1 else ideal_step
@@ -442,7 +500,7 @@ class HandWidget(FloatLayout, Player):
                 actual_step = ideal_step
             final_hand_width = (count - 1) * actual_step + card_width
             start_x = self.center_x - (final_hand_width / 2)
-            base_y_pos = self.y + dp(15)
+            base_y_pos = self.y + sdp(15)
 
             for i, card in enumerate(self.cards):
                 target_x = start_x + (i * actual_step)
@@ -450,7 +508,7 @@ class HandWidget(FloatLayout, Player):
                 # ВАЖЛИВО: Карта піднята, якщо вона вибрана (card.selected == True)
                 target_y = base_y_pos
                 if card.selected:
-                    target_y += dp(30)
+                    target_y += sdp(30)
 
                 if abs(card.x - target_x) > 1 or abs(card.y - target_y) > 1:
                     Animation.stop_all(card)
@@ -463,8 +521,8 @@ class HandWidget(FloatLayout, Player):
         else:
             # (Логіка бота - без змін)
             max_visible = VisualConfig.MAX_VISIBLE_BOT_CARDS
-            step = dp(12)
-            card_w = dp(40)
+            step = sdp(12)
+            card_w = sdp(40)
             display_count = min(count, max_visible)
             total_w = (display_count - 1) * step + card_w
             start_x = self.center_x - (total_w / 2)
@@ -482,10 +540,30 @@ class HandWidget(FloatLayout, Player):
 
             if self.card_count_label:
                 self.card_count_label.center_x = self.center_x
-                self.card_count_label.y = base_y_pos + dp(80)
+                self.card_count_label.y = base_y_pos + sdp(80)
                 self.card_count_label.text = f"x{count}"
                 self.remove_widget(self.card_count_label)
                 self.add_widget(self.card_count_label)
+
+    def _on_scale_change(self, *args):
+        if self.is_main_player:
+            self.size = (sdp(self.base_main_size[0]), sdp(self.base_main_size[1]))
+            self.base_y = sdp(self.base_main_y)
+        else:
+            self.size = (sdp(self.base_bot_size[0]), sdp(self.base_bot_size[1]))
+            self.base_y = sdp(self.base_bot_y)
+            if self.card_count_label:
+                self.card_count_label.font_size = ssp(self.base_bot_label_font_size)
+                self.card_count_label.size = (
+                    sdp(self.base_bot_label_size[0]),
+                    sdp(self.base_bot_label_size[1]),
+                )
+            if hasattr(self, "lbl_name"):
+                self.lbl_name.font_size = ssp(12)
+                self.lbl_name.height = sdp(20)
+            self.setup_opponent_ui()
+        self.spacing_x = sdp(40)
+        self.update_hand_layout()
 
     def on_card_touch(self, instance, touch):
         if not self.is_main_player: return False
@@ -550,8 +628,10 @@ class BattleAreaWidget(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.size_hint = (None, None)
-        self.size = (dp(300), dp(200))
+        self.base_size = (300, 200)
+        self.size = (sdp(self.base_size[0]), sdp(self.base_size[1]))
         self.bind(pos=self.update_canvas, size=self.update_canvas, active=self.update_canvas)
+        responsive_metrics.bind(scale=self._on_scale_change)
 
     def on_touch_down(self, touch):
         # Якщо віджет активний і клік був по ньому
@@ -567,13 +647,17 @@ class BattleAreaWidget(FloatLayout):
             if self.active:
                 # Золотисте підсвічування - зона чекає на карту
                 Color(0.95, 0.77, 0.06, 0.2)
-                RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(15)])
+                RoundedRectangle(pos=self.pos, size=self.size, radius=[sdp(15)])
                 
                 # Яскрава рамка, яка трохи пульсує (можна додати анімацію пізніше)
                 Color(0.95, 0.77, 0.06, 0.8)
-                Line(rounded_rectangle=(self.x, self.y, self.width, self.height, dp(15)), width=dp(3))
+                Line(rounded_rectangle=(self.x, self.y, self.width, self.height, sdp(15)), width=sdp(3))
             else:
                 # Спокійний стан
                 Color(1, 1, 1, 0.05)
-                Line(rounded_rectangle=(self.x, self.y, self.width, self.height, dp(15)), 
-                    width=dp(1.5), dash_length=dp(8), dash_offset=dp(2))
+                Line(rounded_rectangle=(self.x, self.y, self.width, self.height, sdp(15)), 
+                    width=sdp(1.5), dash_length=sdp(8), dash_offset=sdp(2))
+
+    def _on_scale_change(self, *args):
+        self.size = (sdp(self.base_size[0]), sdp(self.base_size[1]))
+        self.update_canvas()

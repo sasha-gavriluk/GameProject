@@ -1,6 +1,6 @@
 import asyncio
 
-from kivy.metrics import dp
+from gui.config.Configs import sdp, ssp
 from gui.NetworkBridge import net
 from gui.sreen.BaseScreen import BaseScreen
 
@@ -21,8 +21,8 @@ class GameScreen(BaseScreen):
         self.ui.add("main_box", "BoxLayout", 
                     parent="game_anchor",
                     orientation="vertical",
-                    spacing=dp(10),
-                    padding=dp(20),
+                    spacing=sdp(10),
+                    padding=sdp(20),
                     size_hint=(1, 1)) # На весь екран
 
         # === ВЕРХНЯ ЧАСТИНА: ІНФО ПРО КІМНАТУ ===
@@ -30,10 +30,25 @@ class GameScreen(BaseScreen):
                     parent="main_box", 
                     orientation="vertical", 
                     size_hint_y=None, 
-                    height=dp(100))
+                    height=sdp(100))
         
-        self.ui.add("lbl_room_title", "TitleLabel", parent="info_box", text="КІМНАТА", font_size="20sp", height=dp(30))
-        self.ui.add("lbl_room_id", "Label", parent="info_box", text="---", font_size="40sp", bold=True, color=(0, 1, 0, 1))
+        self.ui.add(
+            "lbl_room_title",
+            "TitleLabel",
+            parent="info_box",
+            text="КІМНАТА",
+            font_size=ssp(20),
+            height=sdp(30),
+        )
+        self.ui.add(
+            "lbl_room_id",
+            "Label",
+            parent="info_box",
+            text="---",
+            font_size=ssp(40),
+            bold=True,
+            color=(0, 1, 0, 1),
+        )
 
         # === СЕРЕДНЯ ЧАСТИНА: ЧАТ (SCROLLVIEW) ===
         # Створюємо фон для чату (можна через canvas, але поки просто контейнер)
@@ -50,7 +65,7 @@ class GameScreen(BaseScreen):
                     # parent="chat_scroll", <-- UIManager поки не вміє додавати напряму в ScrollView через add()
                     # Тому ми додамо його вручну після build, або використаємо BoxLayout всередині
                     text="Чат розпочато...\n",
-                    font_size="16sp",
+                    font_size=ssp(16),
                     halign="left",
                     valign="bottom",
                     markup=True,
@@ -60,9 +75,9 @@ class GameScreen(BaseScreen):
         self.ui.add("input_box", "BoxLayout", 
                     parent="main_box", 
                     orientation="horizontal", 
-                    spacing=dp(10), 
+                    spacing=sdp(10), 
                     size_hint_y=None, 
-                    height=dp(50))
+                    height=sdp(50))
 
         self.ui.add("inp_chat", "GameTextInput", 
                     parent="input_box", 
@@ -78,9 +93,9 @@ class GameScreen(BaseScreen):
         self.ui.add("controls_box", "BoxLayout", 
                     parent="main_box", 
                     orientation="horizontal", 
-                    spacing=dp(20), 
+                    spacing=sdp(20), 
                     size_hint_y=None, 
-                    height=dp(60))
+                    height=sdp(60))
 
         self.ui.add("btn_start", "MenuButton", parent="controls_box", text="Почати гру", disabled=True)
         self.ui.add("btn_leave", "MenuButton", parent="controls_box", text="Вийти")

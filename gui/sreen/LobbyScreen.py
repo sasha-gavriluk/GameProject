@@ -1,6 +1,6 @@
 import asyncio
 
-from kivy.metrics import dp
+from gui.config.Configs import sdp, responsive_metrics
 from kivy.uix.popup import Popup
 
 from gui.utils.Component import GameTextInput, MenuButton
@@ -26,9 +26,9 @@ class LobbyScreen(BaseScreen):
         self.ui.add("menu_box", "BoxLayout", 
                     parent="main_anchor",
                     orientation="vertical",
-                    spacing=dp(20),
+                    spacing=sdp(20),
                     size_hint=(None, None),
-                    width=dp(320)) # Фіксована ширина меню
+                    width=sdp(320)) # Фіксована ширина меню
         
         # Автоматична висота меню залежно від вмісту
         self.ui.widgets = self.ui.registry # Хак для доступу, або краще через build
@@ -65,6 +65,14 @@ class LobbyScreen(BaseScreen):
         # Хак для авто-висоти (після build об'єкти вже існують)
         box = self.ui.registry["menu_box"]
         box.bind(minimum_height=box.setter('height'))
+        self._bind_box_width(box)
+
+    def _bind_box_width(self, box):
+        def _update_box_width(*_):
+            box.width = min(sdp(380), self.width * 0.9)
+        self.bind(size=_update_box_width)
+        responsive_metrics.bind(scale=lambda *_: _update_box_width())
+        _update_box_width()
 
     def go_back(self, instance):
         if self.controller:
@@ -108,7 +116,7 @@ class LobbyScreen(BaseScreen):
         
         # 1. Вміст вікна (вертикальний бокс)
         from kivy.uix.boxlayout import BoxLayout
-        content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
+        content = BoxLayout(orientation='vertical', spacing=sdp(10), padding=sdp(10))
         
         self.join_input = GameTextInput(hint_text="Введіть ID кімнати (напр. 1234)", multiline=False)
         
@@ -124,7 +132,7 @@ class LobbyScreen(BaseScreen):
         self.popup = Popup(title='Приєднатися до гри',
                            content=content,
                            size_hint=(None, None),
-                           size=(dp(300), dp(200)),
+                           size=(sdp(320), sdp(220)),
                            auto_dismiss=False)
 
         # 5. Дії
