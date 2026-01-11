@@ -10,9 +10,9 @@ from kivy.animation import Animation
 
 from kivy.metrics import dp, sp
 from kivy.utils import get_color_from_hex
-from kivy.properties import StringProperty, BooleanProperty, NumericProperty, ObjectProperty
+from kivy.properties import StringProperty, BooleanProperty, NumericProperty, ObjectProperty, ListProperty
 from kivy.core.text import Label as CoreLabel
-from kivy.graphics import Color, RoundedRectangle, Line, Rotate, PushMatrix, PopMatrix, Rectangle, Translate
+from kivy.graphics import Color, RoundedRectangle, Line
 
 from gui.config.Configs import VisualConfig
 from gui.utils.AnimationManager import AnimationManager
@@ -84,6 +84,7 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
     rank = StringProperty('A')
     is_face_up = BooleanProperty(True)
     selected = BooleanProperty(False)
+    on_click_action = ObjectProperty(None, allownone=True)
     angle = NumericProperty(0)
     offset_y = NumericProperty(0)
 
@@ -104,18 +105,10 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
             'spades': get_color_from_hex('#2c3e50')
         }
 
-        self.bind(
-            pos=self.update_canvas, 
-            size=self.update_canvas, 
-            suit=self.update_content, 
-            rank=self.update_content, 
-            is_face_up=self.update_content, 
-            selected=self.on_selected_change,
-            angle=self.update_canvas,
-            offset_y=self.update_canvas
-        )
-
-        # Перший виклик малювання
+        self.bind(pos=self.update_canvas, size=self.update_canvas, 
+                  suit=self.update_content, rank=self.update_content, 
+                  is_face_up=self.update_content, selected=self.on_selected_change,
+                  angle=self.update_canvas, offset_y=self.update_canvas)
         self.update_canvas()
 
     def on_selected_change(self, instance, value):
@@ -237,6 +230,17 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
             if value < base_y and self.offset_y == 0:
                 self.y = base_y
 
+    def on_touch_down(self, touch):
+        # Перевіряємо, чи клікнули по цій карті
+        if self.collide_point(*touch.pos):
+            # Якщо карті призначена спеціальна дія (вона на столі) — виконуємо її
+            if self.on_click_action:
+                self.on_click_action()
+                return True # Кажемо системі, що клік оброблено
+        
+        # Якщо дії немає (карта в руці), працює стандартна логіка
+        return super().on_touch_down(touch)
+
 class DeckWidget(ButtonBehavior, FloatLayout, Deck):
     """
     Візуальний компонент колоди, що успадковує логіку класу Deck.
@@ -301,30 +305,28 @@ class DeckWidget(ButtonBehavior, FloatLayout, Deck):
 
 class HandWidget(FloatLayout, Player):
     """
-    Віджет руки, який тепер є і візуальним елементом, і логічним гравцем.
+    Віджет руки. Тепер підтримує режим 'multi_select'.
     """
-    selected_card = ObjectProperty(None, allownone=True)
+    selected_cards = ListProperty([]) 
+    multi_select = BooleanProperty(True) # <--- НОВА ВЛАСТИВІСТЬ (Дозволити вибір кількох)
+
     is_main_player = BooleanProperty(False)
     spacing_x = NumericProperty(dp(40))
-    
     player_name = StringProperty('')
-    cards_count_display = StringProperty('')
 
     def __init__(self, name="Player", player_id=None, is_main_player=False, **kwargs):
-        # 1. Повертаємо name та player_id в kwargs, щоб вони дійшли до Player.__init__ через ланцюжок super()
         kwargs['name'] = name
         kwargs['player_id'] = player_id
-        
         self.is_main_player = is_main_player
         
-        # 2. Викликаємо єдиний super().__init__, який ініціалізує і FloatLayout, і Player
+        # Kivy автоматично обробить multi_select з kwargs у super().__init__
         super().__init__(**kwargs)
         
         self.player_name = name
         self.size_hint = (None, None)
         self.cards = [] 
+        self.bg_rect = None 
 
-        # Налаштування розмірів
         if self.is_main_player:
             self.size = (dp(600), dp(150))
             self.base_y = dp(20)
@@ -335,20 +337,23 @@ class HandWidget(FloatLayout, Player):
 
         self.card_count_label = None
         if not self.is_main_player and VisualConfig.SHOW_BOT_CARD_COUNT:
-            self.card_count_label = Label(
-                text="",
-                font_size=dp(14),
-                color=VisualConfig.BOT_LABEL_COLOR,
-                size_hint=(None, None),
-                size=(dp(40), dp(20)),
-                bold=True
-            )
+            self.card_count_label = Label(text="", font_size=dp(14), color=VisualConfig.BOT_LABEL_COLOR, size_hint=(None, None), size=(dp(40), dp(20)), bold=True)
             self.add_widget(self.card_count_label)
 
         self.bind(pos=self.update_hand_layout, size=self.update_hand_layout)
 
+    def clean_canvas(self):
+        """Очищає намальований фон (темну зону), щоб не було дублікатів"""
+        if self.bg_rect:
+            self.canvas.before.remove(self.bg_rect)
+            self.bg_rect = None
+        self.canvas.before.clear() # Про всяк випадок чистимо все
+
     def setup_opponent_ui(self):
         """Створює UI для суперника (ім'я, фон)"""
+        # Спочатку чистимо, щоб не малювати фон двічі (це фіксить темну зону)
+        self.clean_canvas()
+
         with self.canvas.before:
             Color(0, 0, 0, 0.4)
             self.bg_rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(10)])
@@ -356,181 +361,171 @@ class HandWidget(FloatLayout, Player):
         self.bind(pos=self.update_bg, size=self.update_bg)
 
         # Ім'я зверху
-        self.lbl_name = Label(
-            text=self.name,
-            font_size=sp(12),
-            bold=True,
-            size_hint=(1, None),
-            height=dp(20),
-            pos_hint={'top': 1, 'center_x': 0.5}
-        )
-        self.add_widget(self.lbl_name)
+        if not hasattr(self, 'lbl_name') or self.lbl_name not in self.children:
+            self.lbl_name = Label(
+                text=self.name,
+                font_size=sp(12),
+                bold=True,
+                size_hint=(1, None),
+                height=dp(20),
+                pos_hint={'top': 1, 'center_x': 0.5}
+            )
+            self.add_widget(self.lbl_name)
 
     def update_bg(self, *args):
-        if hasattr(self, 'bg_rect'):
+        if self.bg_rect:
             self.bg_rect.pos = self.pos
             self.bg_rect.size = self.size
 
-    def add_card(self, card_widget):
-        """Додає карту візуально і логічно"""
-        super().add_card(card_widget) # Логіка Player
-        self.cards.append(card_widget)
-        self.add_widget(card_widget)
+    def add_card(self, card_widget, initial_pos=None):
+        """
+        Додає карту.
+        :param initial_pos: (x, y) - координати в системі координат HandWidget.
+        """
+        Player.add_card(self, card_widget) 
+        if card_widget not in self.cards:
+            self.cards.append(card_widget)
         
-        # Налаштування для бота vs гравця
+        # Налаштування візуалу
         if not self.is_main_player:
-            card_widget.is_face_up = False # Карти ворога закриті
-            card_widget.size = (dp(40), dp(56)) # Менші карти
+            card_widget.is_face_up = False 
+            target_size = (dp(40), dp(56))
         else:
+            # Тільки коли потрапляє в руку героя, стає відкритою
             card_widget.is_face_up = True
-            card_widget.size = (dp(80), dp(112)) # Стандартні карти
-            # Прив'язка натискання тільки для своїх карт
+            target_size = (dp(80), dp(112)) 
             card_widget.bind(on_touch_down=self.on_card_touch)
+
+        card_widget.pos_hint = {} 
+        
+        # === ЗАХИСТ ВІД ПОМИЛКИ "Already has a parent" ===
+        if card_widget.parent:
+            card_widget.parent.remove_widget(card_widget)
+        # =================================================
+
+        if initial_pos:
+            card_widget.size = target_size
+            card_widget.pos = initial_pos
+            self.add_widget(card_widget)
+        else:
+            card_widget.size = target_size
+            self.add_widget(card_widget)
 
         self.update_hand_layout()
 
     def remove_card(self, card_widget):
-        """Видаляє карту"""
-        super().remove_card(card_widget) # Логіка Player
+        Player.remove_card(self, card_widget)
+        if card_widget in self.selected_cards:
+            self.selected_cards.remove(card_widget)
+
         if card_widget in self.cards:
             self.cards.remove(card_widget)
             self.remove_widget(card_widget)
             self.update_hand_layout()
 
     def update_hand_layout(self, *args):
-        """
-        Динамічно розраховує позиції карт у руці:
-        - Розширює карти, коли їх мало (зручно клікати).
-        - Стискає карти, коли їх багато (вміщує в екран).
-        - Фіксує Y, щоб запобігти просіданню.
-        """
-        
         if not self.cards:
             if self.card_count_label: self.card_count_label.text = ""
             return
 
         count = len(self.cards)
-
-        count = len(self.cards)
         
         if self.is_main_player:
-            # --- НАЛАШТУВАННЯ ДЛЯ ГРАВЦЯ ---
+            # (Логіка розрахунку ширини - без змін)
             card_width = dp(80)
-            # Максимальна ширина, яку може зайняти вся рука (90% ширини екрана)
-            max_total_width = self.width * 0.9
-            
-            # Ідеальний крок між картами, коли їх мало (щоб було зручно тиснути)
-            # Можете змінити dp(55) на більше, якщо хочете ще вільніше
-            ideal_step = dp(55) 
-            
-            # Розраховуємо, скільки ширини зайняли б карти при ідеальному кроці
+            max_total_width = self.width * 0.95
+            ideal_step = dp(50) 
             needed_width = (count - 1) * ideal_step + card_width
-            
-            # Вибираємо фінальний крок:
-            # Якщо потрібна ширина більша за дозволену — стискаємо крок
             if needed_width > max_total_width:
                 actual_step = max_total_width / (count - 1) if count > 1 else ideal_step
             else:
                 actual_step = ideal_step
-            
-            # Розраховуємо загальну ширину з отриманим кроком для центрування
             final_hand_width = (count - 1) * actual_step + card_width
             start_x = self.center_x - (final_hand_width / 2)
-            
-            # БАЗОВА ЛІНІЯ (Суворо фіксована для запобігання просіданню)
-            base_y = self.y + dp(15)
+            base_y_pos = self.y + dp(15)
 
             for i, card in enumerate(self.cards):
-                # Розрахунок цільової X
                 target_x = start_x + (i * actual_step)
                 
-                # 1. Зупиняємо всі попередні анімації, щоб не було конфліктів
-                Animation.stop_all(card)
-                
-                # 2. Жорстко фіксуємо Y (це вбиває проблему просідання при деактивації)
-                card.y = base_y
-                
-                # 3. Анімуємо тільки рух по горизонталі (X)
-                # Якщо карта вже на місці, анімація не потрібна
-                if abs(card.x - target_x) > 1:
-                    anim = Animation(x=target_x, duration=0.25, t='out_quad')
+                # ВАЖЛИВО: Карта піднята, якщо вона вибрана (card.selected == True)
+                target_y = base_y_pos
+                if card.selected:
+                    target_y += dp(30)
+
+                if abs(card.x - target_x) > 1 or abs(card.y - target_y) > 1:
+                    Animation.stop_all(card)
+                    anim = Animation(x=target_x, y=target_y, duration=0.2, t='out_quad')
                     anim.start(card)
                 
-                # 4. Коригуємо Z-index: кожна наступна карта має бути ПОВЕРХ попередньої
                 self.remove_widget(card)
                 self.add_widget(card)
                 
         else:
-            # --- ЛОГІКА ДЛЯ БОТІВ ---
+            # (Логіка бота - без змін)
             max_visible = VisualConfig.MAX_VISIBLE_BOT_CARDS
-            step = dp(12) 
+            step = dp(12)
             card_w = dp(40)
-            
             display_count = min(count, max_visible)
             total_w = (display_count - 1) * step + card_w
-            
             start_x = self.center_x - (total_w / 2)
-            # Притискаємо до самого низу контейнера (y = self.y)
-            base_y = self.y 
-
+            base_y_pos = self.y 
             for i, card in enumerate(self.cards):
-                # Зупиняємо анімації для миттєвого переміщення або плавності
                 Animation.stop_all(card)
-                
                 if i < max_visible:
                     card.opacity = 1
-                    card.pos = (start_x + (i * step), base_y)
+                    card.pos = (start_x + (i * step), base_y_pos)
                 else:
                     card.opacity = 0
-                    card.pos = (start_x + (max_visible - 1) * step, base_y)
-                
-                # Оновлюємо Z-index, щоб карти були одна під одною
+                    card.pos = (start_x + (max_visible - 1) * step, base_y_pos)
                 self.remove_widget(card)
                 self.add_widget(card)
 
-            # Оновлюємо лічильник
             if self.card_count_label:
-                # Ставимо лічильник над картами
                 self.card_count_label.center_x = self.center_x
-                self.card_count_label.y = base_y + dp(80) # Вище карт
+                self.card_count_label.y = base_y_pos + dp(80)
                 self.card_count_label.text = f"x{count}"
-                
-                # Поверх усіх карт
                 self.remove_widget(self.card_count_label)
                 self.add_widget(self.card_count_label)
 
     def on_card_touch(self, instance, touch):
-        """Обробка кліку по карті (тільки для головного гравця)"""
-        if not self.is_main_player:
-            return False
-            
+        if not self.is_main_player: return False
         if instance.collide_point(*touch.pos):
             self.select_card(instance)
             return True
         return False
 
     def select_card(self, card):
-        if card not in self.cards:
-            print("Ця карта вже на столі, її не можна вибрати!")
-            return
+        if card not in self.cards: return
 
-        if self.selected_card == card:
-            # Деактивація
-            anim = Animation(offset_y=0, duration=0.15, t='out_quad')
-            def on_finish(a, c):
-                c.selected = False # Змінюємо ТІЛЬКИ після завершення руху вниз
-            anim.bind(on_complete=on_finish)
-            anim.start(card)
-            self.selected_card = None
+        # 1. Якщо мульти-вибір ЗАБОРОНЕНИЙ (наприклад, Війна)
+        if not self.multi_select:
+            if card.selected:
+                # Якщо клікнули по вже вибраній - знімаємо виділення
+                card.selected = False
+                if card in self.selected_cards:
+                    self.selected_cards.remove(card)
+            else:
+                # Якщо клікнули по новій - СПОЧАТКУ знімаємо все старе
+                for c in list(self.selected_cards):
+                    c.selected = False
+                self.selected_cards = [] # Очищаємо список
+                
+                # Тепер виділяємо нову
+                card.selected = True
+                self.selected_cards.append(card)
+
+        # 2. Якщо мульти-вибір ДОЗВОЛЕНИЙ (Дурак)
         else:
-            # Активація
-            if self.selected_card:
-                self.selected_card.selected = False
-                self.selected_card.offset_y = 0
-            
-            self.selected_card = card
-            card.selected = True
-            Animation(offset_y=dp(30), duration=0.15, t='out_quad').start(card)
+            if card.selected:
+                card.selected = False
+                if card in self.selected_cards:
+                    self.selected_cards.remove(card)
+            else:
+                card.selected = True
+                if card not in self.selected_cards:
+                    self.selected_cards.append(card)
+        
+        self.update_hand_layout()
 
 class TableWidget(FloatLayout):
     """
@@ -546,27 +541,37 @@ class TableWidget(FloatLayout):
 
 class BattleAreaWidget(FloatLayout):
     """
-    Зона в центрі столу, куди гравці кладуть карти.
-    Малює напівпрозорий прямокутник-підказку.
+    Зона в центрі столу.
+    Тепер реагує на кліки, якщо active=True.
     """
-    active = BooleanProperty(False) # Чи підсвічувати зону прямо зараз
+    active = BooleanProperty(False) 
+    on_click_callback = ObjectProperty(None, allownone=True) # Колбек при кліку
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.size_hint = (None, None)
-        self.size = (dp(400), dp(170)) # Достатньо для пари карт
+        self.size = (dp(300), dp(200))
         self.bind(pos=self.update_canvas, size=self.update_canvas, active=self.update_canvas)
+
+    def on_touch_down(self, touch):
+        # Якщо віджет активний і клік був по ньому
+        if self.active and self.collide_point(*touch.pos):
+            if self.on_click_callback:
+                self.on_click_callback() # Викликаємо метод з VisualEngine
+                return True
+        return super().on_touch_down(touch)
 
     def update_canvas(self, *args):
         self.canvas.before.clear()
         with self.canvas.before:
             if self.active:
-                # Золотисте підсвічування зони, коли вона чекає на карту
-                Color(0.95, 0.77, 0.06, 0.2) # Жовтуватий фон
+                # Золотисте підсвічування - зона чекає на карту
+                Color(0.95, 0.77, 0.06, 0.2)
                 RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(15)])
                 
-                Color(0.95, 0.77, 0.06, 0.6) # Яскрава рамка
-                Line(rounded_rectangle=(self.x, self.y, self.width, self.height, dp(15)), width=dp(2.5))
+                # Яскрава рамка, яка трохи пульсує (можна додати анімацію пізніше)
+                Color(0.95, 0.77, 0.06, 0.8)
+                Line(rounded_rectangle=(self.x, self.y, self.width, self.height, dp(15)), width=dp(3))
             else:
                 # Спокійний стан
                 Color(1, 1, 1, 0.05)

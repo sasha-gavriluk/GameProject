@@ -20,15 +20,25 @@ class WarRules(GameRules):
         pass
     
     def is_legal_move(self, action, player, **kwargs):
+        # ВИПРАВЛЕННЯ: Тепер дозволяємо список, якщо в ньому рівно 1 карта
         if isinstance(action, list):
-            return False # Війна не підтримує мульти-хід
+            if len(action) == 1:
+                return True
+            return False # Якщо карт більше однієї — не можна
         return True
 
     def execute_move(self, action, player, **kwargs):
+        # ВИПРАВЛЕННЯ: Дістаємо карту зі списку перед використанням
+        if isinstance(action, list):
+            action = action[0]
+
         table = kwargs.get('table')
-        player.hand.remove(action)
-        table.append(action)
-        print(f"{player.name} поклав {action}")
+        
+        # Перевірка на всяк випадок, щоб не було крашу при видаленні
+        if action in player.hand:
+            player.hand.remove(action)
+            table.append(action)
+            print(f"{player.name} поклав {action}")
 
     def should_switch_turn(self, action, player, **kwargs):
         return True
@@ -37,28 +47,31 @@ class WarRules(GameRules):
         pass
 
     def get_winner(self, **kwargs):
+        """
+        Повертає індекс переможця раунду (0 або 1), або None, якщо раунд ще не закінчено.
+        """
         table = kwargs.get('table')
-        players = kwargs.get('players')
         
-        if len(table) < 2:
+        # Чекаємо, поки на столі буде парна кількість карт (2, 4, 6...)
+        # Якщо карт менше 2 або непарна кількість — раунд триває
+        if len(table) < 2 or len(table) % 2 != 0:
             return None
 
-        card1 = table[-2]
-        card2 = table[-1]
-        val1 = self.ranks_values[card1.rank]
-        val2 = self.ranks_values[card2.rank]
+        # Беремо дві останні карти для порівняння
+        card1 = table[-2] # Карта першого гравця (героя)
+        card2 = table[-1] # Карта другого гравця (бота)
+        
+        # Отримуємо їх силу
+        # Важливо: використовуємо str(rank), щоб уникнути помилок типів
+        val1 = self.ranks_values.get(str(card1.rank), 0)
+        val2 = self.ranks_values.get(str(card2.rank), 0)
 
         if val1 > val2:
-            print(f"Раунд за {players[0].name}!")
-            players[0].hand.extend(table)
-            table.clear()
+            return 0 # Переміг гравець 0 (Герой)
         elif val2 > val1:
-            print(f"Раунд за {players[1].name}!")
-            players[1].hand.extend(table)
-            table.clear()
+            return 1 # Переміг гравець 1 (Бот)
         else:
-            print("Війна! (Нічия)")
-
-        if len(players[0].hand) == 0: return players[1].name
-        elif len(players[1].hand) == 0: return players[0].name
-        return None
+            # Якщо рівні — це Війна!
+            # Повертаємо None, щоб карти залишились на столі для наступного ходу
+            print("--- ВІЙНА! Карти залишаються на столі ---")
+            return None
