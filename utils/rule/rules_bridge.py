@@ -44,7 +44,11 @@ class BridgeRules(GameRules):
         self.deck = engine.deck
         players = engine.players
         
-        # Скидання станів раунду
+        # === 1. ОЧИЩЕННЯ СТОЛУ (ВАЖЛИВО) ===
+        # Якщо від попереднього раунду залишились карти, видаляємо їх з логіки
+        engine.table.clear()
+        
+        # Скидання змінних раунду
         self.forced_suit = None
         self.pending_draw = 0
         self.skip_counter = 0
@@ -57,16 +61,16 @@ class BridgeRules(GameRules):
         self.final_jack_multiplier = 1
         self.winner_score_bonus = 0
         
-        # Скидаємо стани очікування
         self.waiting_for_suit = False
         self.waiting_for_bonus = False
         self.temp_bonus_data = {}
         
-        # --- ФІКС КОЛОДИ (Оригінальний код) ---
+        # === 2. ФОРМУВАННЯ КОЛОДИ БРІДЖУ ===
+        # Беремо повну колоду (52), яку передав engine, і залишаємо тільки 6..A
         all_cards = self.deck.cards[:]
-        for p in players:
-            all_cards.extend(p.hand)
-            p.hand = [] 
+        
+        # Примітка: logic engine.setup_game() вже очистив руки гравців, 
+        # тому all_cards це просто нова чиста колода.
         
         valid_ranks = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
         bridge_deck = [c for c in all_cards if c.rank in valid_ranks]
@@ -74,30 +78,54 @@ class BridgeRules(GameRules):
         self.deck.cards = bridge_deck
         self.deck.shuffle()
         
-        print(f"=== НОВИЙ РАУНД БРІДЖ! Роздача по {self.initial_cards_count}. Множник x1 ===")
+        print(f"=== НОВИЙ РАУНД БРІДЖ! Карт: {len(self.deck.cards)}. Множник x1 ===")
 
     def _safe_draw(self, engine, player, count, table):
+        """
+        Безпечне взяття карт з авто-перемішуванням.
+        """
         for _ in range(count):
-            if len(self.deck.cards) == 0:
+            # 1. Якщо колода пуста ДО взяття — пробуємо перевернути
+            if len(engine.deck.cards) == 0:
                 self._flip_deck(engine, table)
-            if len(self.deck.cards) > 0:
+            
+            # 2. Якщо карти є — беремо одну
+            if len(engine.deck.cards) > 0:
                 engine.draw_cards(player, 1)
+            
+            # 3. === ГОЛОВНА ЗМІНА === 
+            # Перевіряємо колоду ПІСЛЯ взяття.
+            # Якщо вона стала пустою саме зараз, і на столі є карти для мішання (>=2),
+            # то перевертаємо одразу ж! Не чекаємо наступного кліку.
+            if len(engine.deck.cards) == 0 and len(table) >= 2:
+                print("⚡ Колода спорожніла! Авто-перемішування...")
+                self._flip_deck(engine, table)
 
     def _flip_deck(self, engine, table):
         if not table or len(table) < 2:
             print("(!) Колода пуста, і на столі нема карт для перемішування!")
             return
 
+        # 1. Беремо верхню карту (вона лишається на столі)
         top_card = table.pop()
+        
+        # 2. Решту карт забираємо в нову колоду
         new_cards = table[:]
         table.clear()
+        
+        # 3. Повертаємо верхню карту на стіл
         table.append(top_card) 
         
+        # 4. Оновлюємо колоду двигуна
         engine.deck.cards = new_cards
         engine.deck.shuffle()
         
         self.score_multiplier *= 2
         print(f"\n♻️ КОЛОДА ЗАКІНЧИЛАСЬ! Перевертаємо стіл. МНОЖНИК ОЧКІВ: x{self.score_multiplier} ♻️")
+        
+        # === ВИПРАВЛЕНО ТУТ ===
+        # Передаємо дані як іменовані аргументи, а не як словник
+        engine.notify("RESHUFFLE_TABLE", top_card=top_card, new_count=len(new_cards))
 
     def get_allowed_commands(self, **kwargs):
         # Якщо чекаємо вибору від гравця - блокуємо інші команди
@@ -199,7 +227,9 @@ class BridgeRules(GameRules):
             self.forced_suit = suit
             self.waiting_for_suit = False
             print(f"--> ЗАМОВЛЕНО: {self.forced_suit}")
-            return # Хід завершено, перехід до наступного гравця
+        
+            engine.notify("SUIT_ORDERED", suit=self.forced_suit)
+            return
 
         # Обробка вибору бонусу (множення або списання)
         if action == 'set_bonus' or (isinstance(action, dict) and action.get('action') == 'set_bonus'):
@@ -247,7 +277,11 @@ class BridgeRules(GameRules):
         count = len(cards)
         print(f"🃏 {player.name} поклав: {cards}")
         
-        self.forced_suit = None 
+        # Якщо була замовлена масть - скасовуємо її, бо хід зроблено
+        if self.forced_suit:
+            self.forced_suit = None 
+            # СПОВІЩАЄМО UI, ЩО ЗАМОВЛЕННЯ ЗНЯТО
+            engine.notify("SUIT_CLEARED")
 
         # === ПРІОРИТЕТНА ПЕРЕВІРКА: БРІДЖ (4 карти) ===
         if len(table) >= 4:

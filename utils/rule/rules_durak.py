@@ -67,8 +67,6 @@ class DurakRules(GameRules):
             if action == 'take': return True # Брати можна завжди
         
             if action == 'pass':
-                if self.must_cover_six: return False # Не можна пасувати на 6-ку
-                if not self.has_taken_card: return False # Не можна пасувати, поки не взяв карту
                 return True
 
         cards_played = action if isinstance(action, list) else [action]

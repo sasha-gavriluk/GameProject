@@ -8,6 +8,10 @@ from kivy.graphics import Color, Rectangle
 from kivy.metrics import dp
 from kivy.animation import Animation
 from kivy.clock import Clock
+from kivy.uix.modalview import ModalView
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.utils import get_color_from_hex
 
 
 from gui.utils.Component import HandWidget, DeckWidget, BattleAreaWidget, CardWidget, GameButton
@@ -110,6 +114,10 @@ class VisualEngine(FloatLayout):
                 is_round_end=instruction.get("is_round_end"),
                 players_data=instruction.get("scores")
             )
+        elif cmd == "ANIMATE_RESHUFFLE":
+            self._animate_reshuffle_table(instruction)
+        elif cmd == "SHOW_ORDERED_SUIT": self._show_ordered_suit(instruction)
+        elif cmd == "HIDE_ORDERED_SUIT": self._hide_ordered_suit(instruction)
         else: print(f"[VisualEngine] Невідома команда: {cmd}")
 
     def _update_controls(self, data):
@@ -146,6 +154,20 @@ class VisualEngine(FloatLayout):
         self.cards_on_table = []
         self.trump_widget = None
         self._draw_back_button()
+
+        self.suit_indicator = Label(
+            text="?", 
+            font_size=dp(80), 
+            font_name='DejaVuSans',
+            color=(1, 1, 1, 1),
+            outline_width=2,
+            outline_color=(0,0,0,1),
+            size_hint=(None, None), 
+            size=(dp(100), dp(100)),
+            pos_hint={'right': 0.97, 'center_y': 0.5}
+        )
+        self.suit_indicator.opacity = 0
+        self.add_widget(self.suit_indicator)
         
         # Отримуємо налаштування мульти-вибору
         allow_multi = data.get("multi_select", True) # <--- Зчитуємо
@@ -663,36 +685,32 @@ class VisualEngine(FloatLayout):
     def show_suit_selection(self, player_id):
         """Показує 4 кнопки з мастями для вибору"""
         
-        # Перевірка, чи це ми (герой) маємо вибирати
         if not self.hero_widget or self.hero_widget.player_id != player_id:
             return
 
-        from kivy.uix.modalview import ModalView
-        from kivy.uix.boxlayout import BoxLayout
-        from kivy.uix.button import Button
-        from kivy.utils import get_color_from_hex
-
         # Створюємо модальне вікно
-        view = ModalView(size_hint=(None, None), size=(dp(320), dp(100)), auto_dismiss=False)
+        view = ModalView(size_hint=(None, None), size=(dp(340), dp(110)), auto_dismiss=False)
         
         layout = BoxLayout(orientation='horizontal', padding=dp(10), spacing=dp(10))
         
+        # Використовуємо білі кнопки з кольоровим текстом для кращого контрасту
         suits = [
-            {'key': 'hearts', 'symbol': '♥', 'color': '#e74c3c'},   # Червоний
-            {'key': 'diamonds', 'symbol': '♦', 'color': '#e74c3c'}, # Червоний
-            {'key': 'clubs', 'symbol': '♣', 'color': '#2c3e50'},    # Чорний
-            {'key': 'spades', 'symbol': '♠', 'color': '#2c3e50'}    # Чорний
+            {'key': 'hearts',   'symbol': '♥', 'color': '#e74c3c'},   # Червоний
+            {'key': 'diamonds', 'symbol': '♦', 'color': '#e74c3c'},   # Червоний
+            {'key': 'clubs',    'symbol': '♣', 'color': '#2c3e50'},   # Чорний (або темно-синій)
+            {'key': 'spades',   'symbol': '♠', 'color': '#2c3e50'}    # Чорний
         ]
 
         for s in suits:
             btn = Button(
                 text=s['symbol'],
-                font_size=dp(40),
-                background_normal='',
-                background_color=get_color_from_hex(s['color']),
-                color=(1, 1, 1, 1)
+                font_size=dp(50),      # Збільшив шрифт
+                font_name='DejaVuSans',# !!! ВАЖЛИВО: Шрифт з підтримкою символів
+                background_normal='',  # Прибирає стандартну сіру текстуру
+                background_color=(0.95, 0.95, 0.95, 1), # Світло-сірий (майже білий) фон
+                color=get_color_from_hex(s['color'])    # Колір самого символу
             )
-            # При кліку відправляємо команду і закриваємо вікно
+            
             btn.bind(on_release=lambda x, suit=s['key']: self._send_suit_choice(suit, view))
             layout.add_widget(btn)
 
@@ -713,10 +731,6 @@ class VisualEngine(FloatLayout):
         
         if not self.hero_widget or self.hero_widget.player_id != player_id:
             return
-
-        from kivy.uix.modalview import ModalView
-        from kivy.uix.boxlayout import BoxLayout
-        from kivy.uix.button import Button
 
         view = ModalView(size_hint=(None, None), size=(dp(400), dp(150)), auto_dismiss=False)
         layout = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(10))
@@ -779,8 +793,6 @@ class VisualEngine(FloatLayout):
         is_round_end: True -> кнопка 'Новий раунд', False -> кнопка 'Продовжити'
         players_data: список словників [{'name': 'Name', 'score': 100}, ...]
         """
-        from kivy.uix.modalview import ModalView
-        from kivy.uix.boxlayout import BoxLayout
         
         # Якщо дані не передані, беремо поточні з віджетів (для кнопки під час гри)
         if not players_data:
@@ -828,3 +840,72 @@ class VisualEngine(FloatLayout):
         popup.dismiss()
         if self.event_callback:
             self.event_callback({'type': 'ui_action', 'action': 'start_new_round'})
+
+    def _animate_reshuffle_table(self, data):
+        """Карти зі столу (крім верхньої) летять назад у колоду"""
+        if not self.deck_widget or not self.cards_on_table:
+            return
+            
+        top_card_data = data.get("top_card")
+        new_count = data.get("new_count", 0)
+        
+        target_x = self.deck_widget.center_x
+        target_y = self.deck_widget.center_y
+        
+        cards_to_keep = []
+        
+        for card in list(self.cards_on_table):
+            if card.suit == top_card_data['suit'] and card.rank == top_card_data['rank']:
+                cards_to_keep.append(card)
+                continue
+            
+            if card.parent:
+                card.parent.remove_widget(card)
+            self.add_widget(card) 
+            
+            # === ВИПРАВЛЕНО: замість scale використовуємо size ===
+            anim = Animation(
+                center_x=target_x,
+                center_y=target_y,
+                opacity=0,
+                size=(0, 0), # Замінено scale=0.5 на size=(0,0)
+                duration=0.6,
+                t='in_back'
+            )
+            anim.bind(on_complete=lambda a, w: self.remove_widget(w))
+            anim.start(card)
+            
+        self.cards_on_table = cards_to_keep
+        
+        self.deck_widget.cards_count = new_count
+        self.deck_widget.opacity = 1
+        self.deck_widget.update_canvas()
+
+    def _show_ordered_suit(self, data):
+        suit = data.get('suit')
+        # Карта символів і кольорів
+        suits_info = {
+            'hearts':   {'symbol': '♥', 'color': (1, 0, 0, 1)},
+            'diamonds': {'symbol': '♦', 'color': (1, 0, 0, 1)},
+            'clubs':    {'symbol': '♣', 'color': (0.2, 0.2, 0.2, 1)}, # Темно-сірий для чорного
+            'spades':   {'symbol': '♠', 'color': (0.2, 0.2, 0.2, 1)}
+        }
+        
+        info = suits_info.get(suit)
+        if info and self.suit_indicator:
+            self.suit_indicator.text = info['symbol']
+            self.suit_indicator.color = info['color']
+            
+            # Анімація появи (Pop effect)
+            self.suit_indicator.opacity = 1
+            # Скидаємо шрифт перед анімацією (замість scale)
+            self.suit_indicator.font_size = dp(10)
+            
+            anim = Animation(font_size=dp(100), duration=0.2, t='out_back') + \
+                   Animation(font_size=dp(80), duration=0.1)
+            anim.start(self.suit_indicator)
+
+    def _hide_ordered_suit(self, data):
+        if self.suit_indicator and self.suit_indicator.opacity > 0:
+            anim = Animation(opacity=0, duration=0.2)
+            anim.start(self.suit_indicator)

@@ -1,5 +1,7 @@
 # gui/utils/GameAdapter.py
 
+import time # <--- Додаємо імпорт часу
+
 from utils.engine import GameEngine, Player
 from utils.cards import Deck
 from utils.bot import BotPlayer
@@ -9,28 +11,30 @@ from utils.rule.rules_war import WarRules
 from utils.rule.rules_durak import DurakRules
 from utils.rule.rules_bridge import BridgeRules
 
+# Імпортуємо конфіг для доступу до BOT_DELAY
+from gui.config.Configs import VisualConfig 
+
 class GameAdapter:
     def __init__(self, game_type):
         self.game_type = game_type
         self.engine = None
         self.hero_id = "hero"
         self.command_queue = [] 
+        
+        # === Таймер для затримки бота ===
+        self.bot_next_move_time = 0 
 
     def start(self):
         self.command_queue = []
         
         rules = DurakRules()
-        # Визначаємо налаштування для UI
         is_multi_select = True
         
         if self.game_type == "WAR": 
             rules = WarRules()
-            is_multi_select = False # <--- Війна: тільки одна карта
+            is_multi_select = False
         elif self.game_type == "BRIDGE": 
             rules = BridgeRules()
-            # У Бріджі теж зазвичай ходять по одній, але якщо правила дозволяють скидати пари - можна True.
-            # Поки залишимо True (або False, як вирішите, для класичного бріджу часто False).
-            # Давайте для Бріджу теж поки залишимо True, раптом ви захочете мульти-хід.
         
         self.engine = GameEngine(rules)
         
@@ -48,7 +52,7 @@ class GameAdapter:
         setup_cmd = {
             "cmd": "SETUP_TABLE",
             "game_type": self.game_type,
-            "multi_select": is_multi_select, # <--- Передаємо параметр у візуал
+            "multi_select": is_multi_select,
             "players": [
                 {"id": self.hero_id, "name": "Я", "is_hero": True},
                 {"id": "bot_1", "name": "Бот", "is_hero": False}
@@ -57,6 +61,9 @@ class GameAdapter:
         self.command_queue.append(setup_cmd)
         
         self.engine.start_game()
+        
+        # Ініціалізуємо таймер, щоб бот не ходив миттєво після старту (якщо він перший)
+        self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
         
         return self._flush_commands()
 
@@ -68,27 +75,24 @@ class GameAdapter:
 
             if action == 'start_new_round':
                 self.start_next_round()
-                return self.command_queue # Повертаємо чергу команд (SETUP_TABLE і т.д.)
+                return self.command_queue
                 
             elif action == 'get_scores':
                 scores = [{'name': p.name, 'score': p.score} for p in self.engine.players]
                 self.command_queue.append({
                     "cmd": "SHOW_SCORES",
-                    "is_round_end": False, # Просто показати
+                    "is_round_end": False,
                     "scores": scores
                 })
                 return self.command_queue
             
-            # === ВАЖЛИВО: Обробка команд від Popups ===
+            # Popup дії
             if action == 'set_suit':
-                # Перетворюємо рядок у словник для engine
                 self.engine.play_turn({'action': 'set_suit', 'suit': data['suit']})
-                
             elif action == 'set_bonus':
-                # Перетворюємо рядок у словник для engine
                 self.engine.play_turn({'action': 'set_bonus', 'choice': data['choice']})
-            # ==========================================
             
+            # Гравець ходить картою
             elif action == 'play':
                 card_ids = data.get('cards', [])
                 hero = self.engine.players[0]
@@ -107,23 +111,32 @@ class GameAdapter:
                 # take / pass
                 self.engine.play_turn(action)
         
-        # Хід ботів
+        # --- ОНОВЛЕНА ЛОГІКА БОТІВ ---
         current_idx = self.engine.active_player_idx
         current_player = self.engine.players[current_idx]
+        
         if isinstance(current_player, BotPlayer) and not self.engine.game_over:
-             action = current_player.think(self.engine)
-             if action:
-                 self.engine.play_turn(action)
+             # Перевіряємо, чи настав час для ходу
+             if time.time() > self.bot_next_move_time:
+                 action = current_player.think(self.engine)
+                 if action:
+                     self.engine.play_turn(action)
+                     # Встановлюємо таймер на наступний хід (або наступну дію в серії)
+                     self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
+        else:
+             # Якщо зараз хід гравця (або анімація), ми "відсуваємо" таймер бота.
+             # Це гарантує, що як тільки хід перейде до бота, він почекає BOT_DELAY
+             # перед першою дією.
+             self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
 
         self._check_ui_controls()
         return self._flush_commands()
     
     def _check_ui_controls(self):
-        """Визначає, чи потрібно показувати кнопку 'Взяти' або 'Битом'"""
+        # (Код без змін)
         rules = self.engine.rules
         hero_idx = 0
         
-        # Якщо гра Війна - кнопок немає
         if isinstance(rules, WarRules):
             self.command_queue.append({
                 "cmd": "UPDATE_CONTROLS",
@@ -131,44 +144,25 @@ class GameAdapter:
             })
             return
 
-        # Якщо Дурак
         if isinstance(rules, DurakRules):
-            hero_idx = 0 # Hero завжди 0 в нашому сетапі
+            hero_idx = 0
             current_active = self.engine.active_player_idx
-            
-            # Якщо хід не мій і я не захищаюсь - кнопки ховаємо (грубо, але для початку піде)
-            # Але в Дураку система складна: 
-            # 1. Атакуючий ходить (активний).
-            # 2. Захисник (активний) відбивається.
-            
-            # Тому перевіряємо роль героя
             is_defender = (hero_idx == rules.defender_idx)
-            is_attacker = not is_defender # (в дуелі)
+            is_attacker = not is_defender
             
             show_btn = False
             btn_text = ""
             
-            # Ситуація: Я ЗАХИСНИК
             if is_defender:
-                # Якщо на столі є карти (атака йде), я можу "Взяти"
                 if len(rules.pending_attacks) > 0 or len(self.engine.table) > 0:
                     show_btn = True
                     btn_text = "Взяти"
-                # Але треба перевірити, чи зараз мій хід (чи чекаємо поки атакуючий підкине)
-                # У простій реалізації active_player перемикається на захисника, коли треба бити.
                 if self.engine.active_player_idx != hero_idx:
                     show_btn = False
-
-            # Ситуація: Я АТАКУЮЧИЙ
             else:
-                # Якщо на столі є карти, і я можу сказати "Битом" (завершити хід)
                 if len(self.engine.table) > 0:
                     show_btn = True
                     btn_text = "Битом"
-                    
-                # Якщо зараз хід захисника (він думає), я не можу нажати "Битом" поки він не поб'є або не візьме
-                # Хоча в деяких версіях можна сказати "Все, я більше не кидаю".
-                # Для спрощення: показуємо "Битом", тільки якщо active_player == hero (я ходжу)
                 if self.engine.active_player_idx != hero_idx:
                     show_btn = False
 
@@ -181,16 +175,11 @@ class GameAdapter:
         if isinstance(rules, BridgeRules):
             show_btn = False
             btn_text = ""
-            
-            # Перевіряємо, чи зараз хід Героя
             if self.engine.active_player_idx == hero_idx:
-                # Кнопка "Пас" з'являється ТІЛЬКИ якщо гравець вже взяв карту
-                # і не зобов'язаний крити 6-ку
                 if rules.has_taken_card and not rules.must_cover_six:
                     show_btn = True
                     btn_text = "Пас"
                 else:
-                    # Якщо карту ще не брав -> кнопка схована (треба клікати на колоду або ходити)
                     show_btn = False
             
             self.command_queue.append({
@@ -201,7 +190,7 @@ class GameAdapter:
             return
 
     def _on_engine_event(self, event_type, data):
-        
+        # (Код без змін)
         if event_type == "DEAL_CARDS":
             deals = []
             for p in self.engine.players:
@@ -222,12 +211,9 @@ class GameAdapter:
                 "trump_card": trump_data 
             })
 
-        # === ДОДАЄМО ОБРОБКУ НОВОЇ ПОДІЇ ===
         if event_type == "PLAYER_DRAW_DECK":
             p = data['player']
             cards = data['cards']
-            
-            # Підготовка даних карт для візуалу
             cards_data = []
             for c in cards:
                 cards_data.append({"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"})
@@ -237,31 +223,18 @@ class GameAdapter:
                 "player_id": p.player_id,
                 "cards": cards_data
             })
-            # SYNC_HANDS тут не викликаємо одразу, щоб не збити анімацію. 
-            # Карти додадуться в руку в процесі анімації.
-        # ===================================
 
         elif event_type == "PLAYER_TOOK_CARDS":
              player = data.get('player')
              p_id = player.player_id if player else self.hero_id
-             
-             # ВАЖЛИВО: Ця команда йде ПЕРШОЮ (анімація польоту)
-             self.command_queue.append({
-                 "cmd": "TAKE_CARDS", 
-                 "player_id": p_id
-             })
-             
-             # ВАЖЛИВО: Ця команда йде ДРУГОЮ (оновлення руки даними)
+             self.command_queue.append({"cmd": "TAKE_CARDS", "player_id": p_id})
              self.command_queue.append({"cmd": "SYNC_HANDS", "hands": self._get_hands_snapshot()})
-             
-             # Очищення столу (логічне)
              self.command_queue.append({"cmd": "CLEAR_TABLE"})
 
         elif event_type == "PLAYER_MOVE":
             p = data['player']
             action = data['action'] 
             
-            # 1. Перевіряємо, чи це список (або кортеж) карт
             if isinstance(action, (list, tuple)):
                 for card in action:
                     card_data = {"suit": card.suit, "rank": card.rank, "id": f"{card.rank}_{card.suit}"}
@@ -270,8 +243,6 @@ class GameAdapter:
                         "player_id": p.player_id,
                         "card": card_data
                     })
-            
-            # 2. Якщо це одна карта (об'єкт Card)
             elif hasattr(action, 'suit') and hasattr(action, 'rank'): 
                 card_data = {"suit": action.suit, "rank": action.rank, "id": f"{action.rank}_{action.suit}"}
                 self.command_queue.append({
@@ -279,51 +250,28 @@ class GameAdapter:
                     "player_id": p.player_id,
                     "card": card_data
                 })
-            
-            # === 3. ВИПРАВЛЕННЯ: Обробка текстової команди "take" ===
             elif action == "take":
-                # Перевіряємо, чи це Дурень (або інша гра, де "take" = забрати стіл)
                 is_durak = isinstance(self.engine.rules, DurakRules)
-                
                 if is_durak:
-                    # Для Дурня: анімація забору зі столу
-                    self.command_queue.append({
-                        "cmd": "TAKE_CARDS",
-                        "player_id": p.player_id
-                    })
+                    self.command_queue.append({"cmd": "TAKE_CARDS", "player_id": p.player_id})
                     self.command_queue.append({"cmd": "SYNC_HANDS", "hands": self._get_hands_snapshot()})
-                
-                else:
-                    # Для Бріджу: нічого не робимо тут.
-                    # Брідж сам відправить подію PLAYER_DRAW_DECK, 
-                    # яка запустить анімацію з колоди.
-                    pass
-                
-        # ===============================================
         
         elif event_type == "TABLE_CLEARED":
             self.command_queue.append({"cmd": "CLEAR_TABLE"})
             
         elif event_type == "GAME_OVER":
-            # Перевіряємо, чи це Брідж
             if isinstance(self.engine.rules, BridgeRules):
-                # Формуємо дані про очки
                 scores = [{'name': p.name, 'score': p.score} for p in self.engine.players]
-                
                 self.command_queue.append({
                     "cmd": "SHOW_SCORES",
                     "is_round_end": True,
                     "scores": scores
                 })
             else:
-                # Стара логіка для інших ігор
                 self.command_queue.append({"cmd": "SHOW_WINNER", "winner": data['winner']})
 
         elif event_type == "SHOW_SUIT_SELECTOR":
-            self.command_queue.append({
-                "cmd": "SHOW_SUIT_SELECTOR",
-                "player_id": data['player_id']
-            })
+            self.command_queue.append({"cmd": "SHOW_SUIT_SELECTOR", "player_id": data['player_id']})
             
         elif event_type == "SHOW_BONUS_SELECTOR":
             self.command_queue.append({
@@ -332,12 +280,36 @@ class GameAdapter:
                 "mult": data['mult'],
                 "sub": data['sub']
             })
+
+        elif event_type == "RESHUFFLE_TABLE":
+            # Приходить top_card (об'єкт) і new_count (int)
+            top = data['top_card']
             
-        # Оновлюємо кнопки після кожної події
+            # Формуємо команду для VisualEngine
+            self.command_queue.append({
+                "cmd": "ANIMATE_RESHUFFLE",
+                "top_card": {
+                    "suit": top.suit,
+                    "rank": top.rank,
+                    "id": f"{top.rank}_{top.suit}"
+                },
+                "new_count": data['new_count']
+            })
+
+        elif event_type == "SUIT_ORDERED":
+            self.command_queue.append({
+                "cmd": "SHOW_ORDERED_SUIT",
+                "suit": data['suit']
+            })
+            
+        elif event_type == "SUIT_CLEARED":
+            self.command_queue.append({
+                "cmd": "HIDE_ORDERED_SUIT"
+            })
+            
         self._check_ui_controls()
 
     def _get_hands_snapshot(self):
-        """Допоміжний метод для SYNC_HANDS"""
         res = []
         for p in self.engine.players:
             cards = [{"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"} for c in p.hand]
@@ -349,28 +321,42 @@ class GameAdapter:
         self.command_queue = []
         return res
     
+    def _reset_bot_timer(self):
+        """Скидає таймер: бот чекатиме BOT_DELAY секунд"""
+        self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
+
     def start_next_round(self):
-        """Перезапускає гру зі збереженням очок гравців"""
         print("--- ЗАПУСК НОВОГО РАУНДУ ---")
         
-        # 1. Скидаємо руки гравців
-        for p in self.engine.players:
-            p.hand = []
-            
-        # 2. Скидаємо колоду і стіл
-        # === ВИПРАВЛЕННЯ ТУТ ===
-        self.engine.start_game() # Було self.engine.start(), що викликало помилку
-        # =======================
+        # 1. Скидаємо прапорець кінця гри
+        self.engine.game_over = False
         
-        # 3. Відправляємо команди на перемальовування столу
+        # 2. Створюємо нову колоду
+        new_deck = Deck()
+        self.engine.setup_game(new_deck)
+        
+        # 3. !!! ВАЖЛИВО !!! 
+        # Спочатку відправляємо команду на налаштування столу (вона очистить старе).
+        # Це має бути ПЕРЕД start_game(), щоб не стерти нову роздачу.
         self.command_queue.append({
             "cmd": "SETUP_TABLE",
             "game_type": self.game_type,
-            "multi_select": self.game_type != "WAR", # Або логіка з start()
+            "multi_select": self.game_type != "WAR",
             "players": [
                 {"id": p.player_id, "name": p.name, "is_hero": (p.player_id == self.hero_id)}
                 for p in self.engine.players
             ]
         })
-        self.command_queue.append({"cmd": "INITIAL_DEAL"})
+        
+        # 4. Тепер запускаємо гру.
+        # Всередині спрацює подія DEAL_CARDS, яка додасть правильний INITIAL_DEAL у чергу.
+        # Оскільки SETUP_TABLE вже в черзі першим, анімація колоди спрацює поверх чистого столу.
+        self.engine.start_game()
+        
+        # 5. Скидаємо таймер бота
+        self._reset_bot_timer()
+
+        # Примітка: Ми більше НЕ додаємо порожній "INITIAL_DEAL" вручну, 
+        # бо його додасть обробник подій _on_engine_event автоматично.
+
         self._check_ui_controls()

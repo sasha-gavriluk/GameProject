@@ -1,19 +1,25 @@
 import json
 import os
 
+from kivy.utils import platform # Додали імпорт
+from kivy.app import App        # Додали імпорт
+
 class SettingsLoader:
     def __init__(self, module_name):
-        """
-        Ініціалізація класу налаштувань для конкретного модуля.
-
-        :param module_name: Назва модуля, для якого створюється файл налаштувань.
-        """
         self.module_name = module_name
-        self.base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'data', 'Settings'))
+        
+        # --- ВИПРАВЛЕННЯ ДЛЯ ANDROID ---
+        if platform == 'android':
+            # На телефоні пишемо у дозволену папку
+            app_data_dir = App.get_running_app().user_data_dir
+            self.base_dir = os.path.join(app_data_dir, 'Settings')
+        else:
+            # На комп'ютері залишаємо як було (папка поруч з кодом)
+            self.base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'data', 'Settings'))
+        # -------------------------------
+
         self.ensure_directory_exists(self.base_dir)
         self.settings_file = os.path.join(self.base_dir, f"{module_name}.json")
-
-        # Завантажуємо або створюємо файл налаштувань
         self.settings = self.load_data()
 
     def load_data(self):
