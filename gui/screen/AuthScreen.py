@@ -1,10 +1,10 @@
 import asyncio
 
-from kivy.metrics import dp
-
 from gui.utils.GameSettings import game_settings
-from gui.sсreen.BaseScreen import BaseScreen
+from gui.screen.BaseScreen import BaseScreen
 from gui.NetworkBridge import net
+from gui.config.Configs import VisualConfig
+from gui.utils.Responsive import bind_responsive_width, bind_scaled_property
 
 class AuthScreen(BaseScreen):
     def __init__(self, ui_manager, controller, **kwargs):
@@ -25,9 +25,9 @@ class AuthScreen(BaseScreen):
         self.ui.add("auth_box", "BoxLayout", 
                     parent="auth_anchor",
                     orientation="vertical",
-                    spacing=dp(15),       # Відступ між елементами
+                    spacing=VisualConfig.sdp(15),       # Відступ між елементами
                     size_hint=(None, None),
-                    width=dp(300))
+                    width=VisualConfig.sdp(300))
 
         # 3. Заголовок
         self.ui.add("lbl_title", "TitleLabel", parent="auth_box", text="ВХІД")
@@ -65,6 +65,8 @@ class AuthScreen(BaseScreen):
         # Авто-висота контейнера
         box = self.ui.registry["auth_box"]
         box.bind(minimum_height=box.setter('height'))
+        bind_scaled_property(box, "spacing", 15)
+        bind_responsive_width(box, max_width=360, ratio=0.85, min_width=260)
 
     def do_login(self, instance):
         login_val = self.ui.registry["inp_login"].text

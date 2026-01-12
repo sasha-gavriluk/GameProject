@@ -1,5 +1,6 @@
-from kivy.metrics import dp
-from gui.sсreen.BaseScreen import BaseScreen
+from gui.screen.BaseScreen import BaseScreen
+from gui.config.Configs import VisualConfig
+from gui.utils.Responsive import bind_responsive_width, bind_scaled_property
 
 class LocalGameSelectScreen(BaseScreen):
     def __init__(self, ui_manager, controller, **kwargs):
@@ -15,9 +16,9 @@ class LocalGameSelectScreen(BaseScreen):
         self.ui.add("box_local", "BoxLayout", 
                     parent="anchor_local", 
                     orientation="vertical", 
-                    spacing=dp(20), 
+                    spacing=VisualConfig.sdp(20), 
                     size_hint=(None, None), 
-                    width=dp(300))
+                    width=VisualConfig.sdp(300))
         
         self.ui.add("title_local", "TitleLabel", parent="box_local", text="Оберіть гру")
         
@@ -45,6 +46,8 @@ class LocalGameSelectScreen(BaseScreen):
         
         box = self.ui.registry["box_local"]
         box.bind(minimum_height=box.setter('height'))
+        bind_scaled_property(box, "spacing", 20)
+        bind_responsive_width(box, max_width=360, ratio=0.85, min_width=260)
 
     def start_game(self, game_type):
         # Викликаємо оновлений switch_screen з параметром game_type

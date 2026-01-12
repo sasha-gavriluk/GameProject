@@ -1,5 +1,4 @@
 from kivy.animation import Animation
-from kivy.metrics import dp
 import random
 
 from gui.config.Configs import VisualConfig
@@ -18,7 +17,7 @@ class AnimationManager:
     def animate_discard(card_widget, screen_width, screen_height, on_complete=None):
         """Анімація відбою."""
         anim = Animation(
-            pos=(-dp(300), screen_height / 2), 
+            pos=(-VisualConfig.sdp(300), screen_height / 2), 
             angle=random.uniform(-90, 90), 
             duration=0.6, 
             t='in_back'
@@ -72,7 +71,7 @@ class AnimationManager:
         # Спочатку карта перевертається (якщо ще не перевернута)
         card_widget.is_face_up = True
         
-        target_center_x = deck_cx + dp(40)
+        target_center_x = deck_cx + VisualConfig.sdp(40)
         target_center_y = deck_cy
 
         # Використовуємо 'out_back' для ефекту вистрибування
@@ -93,7 +92,7 @@ class AnimationManager:
         
         if trump_card:
             # Зсув козиря відносно нового центру колоди
-            target_trump_x = target_pos[0] + dp(40)
+            target_trump_x = target_pos[0] + VisualConfig.sdp(40)
             anim_trump = Animation(
                 center_x=target_trump_x, 
                 center_y=target_pos[1], 
@@ -107,7 +106,7 @@ class AnimationManager:
     # ПРАВИЛЬНИЙ ВАРІАНТ
     @staticmethod
     def animate_selection(card_widget, is_selected):
-        target_offset = dp(30) if is_selected else 0
+        target_offset = VisualConfig.sdp(30) if is_selected else 0
         # Переконайтеся, що анімується offset_y, а НЕ y
         anim = Animation(offset_y=target_offset, duration=0.15, t='out_quad')
         anim.start(card_widget)

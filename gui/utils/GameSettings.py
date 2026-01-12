@@ -2,7 +2,11 @@ import sys
 import os
 import base64 # Для кодування
 
+from jnius import autoclass
+
 from utils.SettingsLoader import SettingsLoader
+from kivy.core.window import Window
+from kivy.utils import platform
 
 class GameSettings:
     DEFAULTS = {
@@ -11,7 +15,8 @@ class GameSettings:
         "auto_login": False,
         "volume": 100,
         "server_ip": "127.0.0.1", # Добавимо налаштування сервера
-        "server_port": 8765
+        "server_port": 8765,
+        "orientation": "portrait",
     }
 
     def __init__(self):
@@ -79,6 +84,45 @@ class GameSettings:
     @property
     def server_port(self):
         return self.loader.settings.get("server_port", 9090)
+
+    @property
+    def orientation(self):
+        return self.loader.settings.get("orientation", "landscape")
+
+    @orientation.setter
+    def orientation(self, value):
+        self.loader.settings["orientation"] = value
+        self.loader.save_data()
+
+    def apply_orientation(self):
+        if self.orientation == "portrait":
+            Window.rotation = 0
+        elif self.orientation == "landscape":
+            Window.rotation = 90
+        else:
+            Window.rotation = 0
+        self._apply_android_orientation()
+
+    def _apply_android_orientation(self):
+        if platform != "android":
+            return
+        try:
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            ActivityInfo = autoclass("android.content.pm.ActivityInfo")
+            activity = PythonActivity.mActivity
+            if self.orientation == "portrait":
+                activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+            elif self.orientation == "landscape":
+                activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+            else:
+                activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR)
+        except Exception:
+            # На випадок відсутності jnius або проблем з Android API
+            return
+
+    def reload(self):
+        self.loader.reload()
+        self._ensure_defaults()
 
 # Глобальний об'єкт
 game_settings = GameSettings()

@@ -1,13 +1,13 @@
 import asyncio
-
-from kivy.metrics import dp
 from kivy.uix.popup import Popup
 
 from gui.utils.Component import GameTextInput, MenuButton
 
 from gui.NetworkBridge import net
 
-from gui.sсreen.BaseScreen import BaseScreen
+from gui.screen.BaseScreen import BaseScreen
+from gui.config.Configs import VisualConfig
+from gui.utils.Responsive import bind_responsive_width, bind_scaled_property
 
 # --- ЕКРАН ЛОБІ (Оновлений) ---
 class LobbyScreen(BaseScreen):
@@ -26,9 +26,9 @@ class LobbyScreen(BaseScreen):
         self.ui.add("menu_box", "BoxLayout", 
                     parent="main_anchor",
                     orientation="vertical",
-                    spacing=dp(20),
+                    spacing=VisualConfig.sdp(20),
                     size_hint=(None, None),
-                    width=dp(320)) # Фіксована ширина меню
+                    width=VisualConfig.sdp(320)) # Фіксована ширина меню
         
         # Автоматична висота меню залежно від вмісту
         self.ui.widgets = self.ui.registry # Хак для доступу, або краще через build
@@ -65,6 +65,8 @@ class LobbyScreen(BaseScreen):
         # Хак для авто-висоти (після build об'єкти вже існують)
         box = self.ui.registry["menu_box"]
         box.bind(minimum_height=box.setter('height'))
+        bind_scaled_property(box, "spacing", 20)
+        bind_responsive_width(box, max_width=360, ratio=0.85, min_width=260)
 
     def go_back(self, instance):
         if self.controller:
@@ -108,7 +110,11 @@ class LobbyScreen(BaseScreen):
         
         # 1. Вміст вікна (вертикальний бокс)
         from kivy.uix.boxlayout import BoxLayout
-        content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
+        content = BoxLayout(
+            orientation='vertical',
+            spacing=VisualConfig.sdp(10),
+            padding=VisualConfig.sdp(10),
+        )
         
         self.join_input = GameTextInput(hint_text="Введіть ID кімнати (напр. 1234)", multiline=False)
         
@@ -124,7 +130,7 @@ class LobbyScreen(BaseScreen):
         self.popup = Popup(title='Приєднатися до гри',
                            content=content,
                            size_hint=(None, None),
-                           size=(dp(300), dp(200)),
+                           size=(VisualConfig.sdp(300), VisualConfig.sdp(200)),
                            auto_dismiss=False)
 
         # 5. Дії

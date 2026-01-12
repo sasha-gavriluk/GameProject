@@ -5,7 +5,7 @@ from gui.utils.GameSettings import game_settings
 
 # Імпортуємо команди з твого серверного API, щоб не писати рядки вручну
 
-from server.api import ServerCommands
+from utils.api import ServerCommands
 
 class NetworkBridge:
     _instance = None

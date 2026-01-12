@@ -1,67 +1,116 @@
 import json
 import os
-
-from kivy.utils import platform # Додали імпорт
-from kivy.app import App        # Додали імпорт
+from kivy.utils import platform
+from kivy.app import App
 
 class SettingsLoader:
     def __init__(self, module_name):
         self.module_name = module_name
-        
-        # --- ВИПРАВЛЕННЯ ДЛЯ ANDROID ---
-        if platform == 'android':
-            # На телефоні пишемо у дозволену папку
-            app_data_dir = App.get_running_app().user_data_dir
-            self.base_dir = os.path.join(app_data_dir, 'Settings')
-        else:
-            # На комп'ютері залишаємо як було (папка поруч з кодом)
-            self.base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'data', 'Settings'))
-        # -------------------------------
-
-        self.ensure_directory_exists(self.base_dir)
-        self.settings_file = os.path.join(self.base_dir, f"{module_name}.json")
+        self._base_dir = None  # Внутрішня змінна для кешування шляху
+        # Завантажуємо дані. Якщо App ще не готовий, повернеться пустий словник, 
+        # але програма не впаде.
         self.settings = self.load_data()
+
+    @property
+    def base_dir(self):
+        """
+        Повертає шлях до папки налаштувань.
+        Реалізує 'Lazy Loading': визначає шлях тільки в момент звернення.
+        """
+        # 1. Якщо ми вже знайшли і запам'ятали правильний шлях - повертаємо його
+        if self._base_dir:
+            return self._base_dir
+
+        # 2. Логіка для Android
+        if platform == 'android':
+            app = App.get_running_app()
+            if app:
+                # Якщо додаток вже запущено, ми можемо безпечно отримати user_data_dir
+                data_dir = app.user_data_dir
+                self._base_dir = os.path.join(data_dir, 'Settings')
+                self.ensure_directory_exists(self._base_dir)
+                return self._base_dir
+            else:
+                # !!! КРИТИЧНИЙ МОМЕНТ !!!
+                # Якщо App ще None (це буває при імпорті), ми НЕ зберігаємо результат в _base_dir,
+                # а просто повертаємо поточну папку ".".
+                # Це дозволяє програмі запуститися без помилок. 
+                # Наступного разу, коли ми викличемо base_dir, App вже буде існувати.
+                print("[SettingsLoader] Waiting for App initialization...")
+                return "." 
+        
+        # 3. Логіка для ПК (Windows/Linux)
+        else:
+            # На ПК шлях стабільний, обчислюємо відносно файлу скрипта
+            self._base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'data', 'Settings'))
+            self.ensure_directory_exists(self._base_dir)
+            return self._base_dir
+
+    @property
+    def settings_file(self):
+        """Динамічно формує повний шлях до файлу налаштувань"""
+        return os.path.join(self.base_dir, f"{self.module_name}.json")
+
+    def ensure_directory_exists(self, directory):
+        """Створює папку, якщо її немає (і це не коренева папка)"""
+        if directory and directory != "." and not os.path.exists(directory):
+            try:
+                os.makedirs(directory)
+            except OSError as e:
+                print(f"[SettingsLoader] Error creating directory {directory}: {e}")
 
     def load_data(self):
-        """
-        Завантажує дані з файлу налаштувань або створює новий файл, якщо його немає.
-
-        :return: Дані з файлу у вигляді словника.
-        """
-        if not os.path.exists(self.settings_file):
-            print(f"Файл {self.settings_file} не знайдено. Створюється новий файл.")
-            with open(self.settings_file, 'w', encoding="utf-8") as file:
-                json.dump({}, file)  # Створюємо порожній файл JSON
+        """Безпечне завантаження даних"""
+        path = self.settings_file
+        
+        if not os.path.exists(path):
+            # Якщо ми на Android і App ще не готовий (path == "./config.json"),
+            # ми не намагаємось створити файл, щоб не отримати помилку прав доступу.
+            if platform == 'android' and self.base_dir == ".":
+                return {}
+            
+            # В інших випадках створюємо пустий файл
+            try:
+                with open(path, 'w', encoding="utf-8") as file:
+                    json.dump({}, file)
+            except Exception as e:
+                print(f"[SettingsLoader] Failed to create settings file at {path}: {e}")
+                return {}
             return {}
 
         try:
-            with open(self.settings_file, 'r', encoding="utf-8") as file:
+            with open(path, 'r', encoding="utf-8") as file:
                 return json.load(file)
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"Помилка завантаження даних: {e}")
+        except Exception as e:
+            print(f"[SettingsLoader] Failed to load settings: {e}")
             return {}
-        
-    def reload(self):
-        self.settings = self.load_data()
 
     def save_data(self):
-        """
-        Зберігає поточні дані в файл налаштувань.
-        """
+        """Безпечне збереження даних"""
+        # Якщо App ще не ініціалізовано на Android, пропускаємо збереження,
+        # щоб не писати в системний корінь.
+        if platform == 'android' and self.base_dir == ".":
+            print("[SettingsLoader] Skipping save: App not initialized.")
+            return
+
+        path = self.settings_file
         try:
-            with open(self.settings_file, 'w') as file:
+            with open(path, 'w', encoding="utf-8") as file:
                 json.dump(self.settings, file, indent=4)
         except Exception as e:
-            print(f"Помилка збереження даних: {e}")
+            print(f"[SettingsLoader] Failed to save settings to {path}: {e}")
+
+    def reload(self):
+        """
+        Цей метод варто викликати після старту App (наприклад, в on_start),
+        щоб перечитати налаштування з правильної папки Android.
+        """
+        self._base_dir = None # Скидаємо кеш шляху
+        self.settings = self.load_data()
+
+    # --- Стандартні методи для роботи зі словником налаштувань ---
 
     def get_nested_setting(self, keys, default=None):
-        """
-        Отримує значення налаштувань з багаторівневої структури за допомогою списку ключів.
-
-        :param keys: Список ключів, які вказують на вкладену структуру.
-        :param default: Значення за замовчуванням, якщо ключі не знайдено.
-        :return: Значення налаштувань або значення за замовчуванням.
-        """
         value = self.settings
         try:
             for key in keys:
@@ -71,12 +120,6 @@ class SettingsLoader:
             return default
 
     def update_nested_setting(self, keys, value):
-        """
-        Оновлює значення у багаторівневих налаштуваннях за допомогою списку ключів.
-
-        :param keys: Список ключів для оновлення.
-        :param value: Нове значення.
-        """
         d = self.settings
         try:
             for key in keys[:-1]:
@@ -84,21 +127,12 @@ class SettingsLoader:
             d[keys[-1]] = value
             self.save_data()
         except Exception as e:
-            print(f"Помилка оновлення налаштувань: {e}")
+            print(f"Error updating nested setting: {e}")
 
     def add_settings_to_class(self, class_name, key_name, new_settings):
-        """
-        Додає або оновлює налаштування для вказаного класу з вказаною назвою ключа.
-
-        :param class_name: Назва класу, до якого додаються налаштування.
-        :param key_name: Назва ключа, під яким будуть додані нові налаштування.
-        :param new_settings: Нові налаштування у вигляді словника або списку.
-        """
         if class_name not in self.settings:
-            self.settings[class_name] = {}  # Створюємо пустий словник для класу, якщо його ще немає
-
+            self.settings[class_name] = {}
         if key_name not in self.settings[class_name]:
-            # Створюємо пустий словник або список для ключа, якщо його ще немає
             if isinstance(new_settings, dict):
                 self.settings[class_name][key_name] = {}
             elif isinstance(new_settings, list):
@@ -106,47 +140,23 @@ class SettingsLoader:
 
         existing_settings = self.settings[class_name][key_name]
 
-        # Якщо нові налаштування є словником
         if isinstance(new_settings, dict):
             for new_key, new_value in new_settings.items():
-                if new_key in existing_settings:
-                    if existing_settings[new_key] != new_value:
-                        print(f"Оновлюємо параметри для {new_key}.")
-                        existing_settings[new_key] = new_value
-                else:
-                    print(f"Додаємо новий індикатор/паттерн {new_key}.")
+                if new_key not in existing_settings or existing_settings[new_key] != new_value:
                     existing_settings[new_key] = new_value
-
-        # Якщо нові налаштування є списком
         elif isinstance(new_settings, list):
             for item in new_settings:
                 if item not in existing_settings:
                     existing_settings.append(item)
-                else:
-                    print(f"Елемент {item} вже існує в списку.")
-
-        # Зберігаємо оновлені налаштування
+        
         self.save_data()
 
     def get_settings_from_class(self, class_name, key_name):
-        """
-        Отримує налаштування для вказаного класу та ключа.
-
-        :param class_name: Назва класу, з якого витягуються налаштування.
-        :param key_name: Назва ключа, під яким зберігаються налаштування.
-        :return: Налаштування у вигляді словника або списку, або None, якщо не знайдено.
-        """
         if class_name in self.settings and key_name in self.settings[class_name]:
             return self.settings[class_name][key_name]
-        else:
-            print(f"Налаштування для {class_name} або {key_name} не знайдено.")
-            return None
+        return None
         
     def delete_nested_setting(self, keys):
-        """
-        Видаляє ключ у багаторівневих налаштуваннях за списком ключів.
-        :param keys: список ключів (для вкладеності)
-        """
         d = self.settings
         try:
             for key in keys[:-1]:
@@ -154,12 +164,5 @@ class SettingsLoader:
             if keys[-1] in d:
                 del d[keys[-1]]
                 self.save_data()
-                print(f"Ключ {'.'.join(keys)} видалено.")
-            else:
-                print(f"Ключ {'.'.join(keys)} не знайдено для видалення.")
         except (KeyError, TypeError) as e:
-            print(f"Помилка при видаленні {'.'.join(keys)}: {e}")
-
-    def ensure_directory_exists(self, directory):
-        if not os.path.exists(directory):
-            os.makedirs(directory)
+            print(f"Error deleting setting: {e}")

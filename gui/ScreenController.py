@@ -2,12 +2,11 @@ from kivy.uix.screenmanager import ScreenManager, FadeTransition
 from gui.utils.UIManager import UIManager
 
 # Імпорти екранів
-from gui.sсreen.MainMenuScreen import MainMenuScreen
-from gui.sсreen.LobbyScreen import LobbyScreen
-from gui.sсreen.AuthScreen import AuthScreen
-from gui.sсreen.LocalGameSelectScreen import LocalGameSelectScreen
-from gui.sсreen.PlayGameScreen import PlayGameScreen  # <--- Новий імпорт
-
+from gui.screen.MainMenuScreen import MainMenuScreen
+from gui.screen.LobbyScreen import LobbyScreen
+from gui.screen.AuthScreen import AuthScreen
+from gui.screen.LocalGameSelectScreen import LocalGameSelectScreen
+from gui.screen.PlayGameScreen import PlayGameScreen  # <--- Новий імпорт
 class ScreenController(ScreenManager):
     def __init__(self, **kwargs):
         super().__init__(transition=FadeTransition(), **kwargs)

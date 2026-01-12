@@ -1,9 +1,10 @@
 from kivy.clock import Clock
-from gui.sсreen.BaseScreen import BaseScreen
+from gui.screen.BaseScreen import BaseScreen
 from gui.utils.VisualEngine import VisualEngine
 
 # Імпортуємо наш новий адаптер (який ми створили раніше)
 from gui.utils.GameAdapter import GameAdapter 
+from gui.utils.GameSettings import game_settings
 
 class PlayGameScreen(BaseScreen):
     def __init__(self, ui_manager, controller, **kwargs):
@@ -16,6 +17,7 @@ class PlayGameScreen(BaseScreen):
     def on_enter(self):
         """Запускається автоматично при вході на екран"""
         self.clear_widgets()
+        game_settings.apply_orientation()
         
         # 1. Створюємо Візуальний Двигун (пустий)
         self.visual_engine = VisualEngine()

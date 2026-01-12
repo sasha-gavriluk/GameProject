@@ -5,7 +5,6 @@ from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
 
 from kivy.graphics import Color, Rectangle
-from kivy.metrics import dp
 from kivy.animation import Animation
 from kivy.clock import Clock
 from kivy.uix.modalview import ModalView
@@ -55,7 +54,7 @@ class VisualEngine(FloatLayout):
         # === ДОДАЄМО КНОПКУ ДІЇ ===
         self.btn_action = GameButton(text="Взяти")
         self.btn_action.size_hint = (None, None)
-        self.btn_action.size = (dp(120), dp(50))
+        self.btn_action.size = (VisualConfig.sdp(120), VisualConfig.sdp(50))
         # Розміщуємо справа знизу, над рукою
         self.btn_action.pos_hint = {'right': 0.95, 'y': 0.25} 
         self.btn_action.opacity = 0
@@ -83,7 +82,7 @@ class VisualEngine(FloatLayout):
                     return
             btn = GameButton(text="< Назад")
             btn.size_hint = (None, None)
-            btn.size = (dp(100), dp(50))
+            btn.size = (VisualConfig.sdp(100), VisualConfig.sdp(50))
             btn.pos_hint = {'x': 0.02, 'top': 0.98}
             btn.bind(on_release=lambda x: self.go_back_callback())
             self.add_widget(btn)
@@ -157,13 +156,13 @@ class VisualEngine(FloatLayout):
 
         self.suit_indicator = Label(
             text="?", 
-            font_size=dp(80), 
+            font_size=VisualConfig.ssp(80), 
             font_name='DejaVuSans',
             color=(1, 1, 1, 1),
             outline_width=2,
             outline_color=(0,0,0,1),
             size_hint=(None, None), 
-            size=(dp(100), dp(100)),
+            size=(VisualConfig.sdp(100), VisualConfig.sdp(100)),
             pos_hint={'right': 0.97, 'center_y': 0.5}
         )
         self.suit_indicator.opacity = 0
@@ -175,7 +174,7 @@ class VisualEngine(FloatLayout):
         # Кнопка дій
         self.btn_action = GameButton(text="Взяти")
         self.btn_action.size_hint = (None, None)
-        self.btn_action.size = (dp(120), dp(50))
+        self.btn_action.size = (VisualConfig.sdp(120), VisualConfig.sdp(50))
         self.btn_action.pos_hint = {'right': 0.95, 'y': 0.25}
         self.btn_action.opacity = 0
         self.btn_action.disabled = True
@@ -348,7 +347,7 @@ class VisualEngine(FloatLayout):
         
         # Ставимо точно під колоду
         self.trump_widget.center = self.deck_widget.center
-        self.trump_widget.size = (dp(80), dp(112)) # Стандартний розмір
+        self.trump_widget.size = (VisualConfig.CARD_W, VisualConfig.CARD_H) # Стандартний розмір
         
         # Хак з Z-індексом: додаємо козиря, потім піднімаємо колоду наверх
         self.add_widget(self.trump_widget)
@@ -408,9 +407,9 @@ class VisualEngine(FloatLayout):
         card.is_face_up = False 
         
         if is_hero:
-            card.size = (dp(80), dp(112))
+            card.size = (VisualConfig.CARD_W, VisualConfig.CARD_H)
         else:
-            card.size = (dp(40), dp(56)) 
+            card.size = (VisualConfig.BOT_CARD_W, VisualConfig.BOT_CARD_H) 
 
         self.add_widget(card)
         Clock.schedule_once(lambda dt: setattr(card, 'opacity', 1), 0.05)
@@ -527,8 +526,8 @@ class VisualEngine(FloatLayout):
 
         if self.battle_widget:
             # (далі код анімації без змін)
-            rand_x = random.randint(-int(dp(30)), int(dp(30)))
-            rand_y = random.randint(-int(dp(40)), int(dp(40)))
+            rand_x = random.randint(-int(VisualConfig.sdp(30)), int(VisualConfig.sdp(30)))
+            rand_y = random.randint(-int(VisualConfig.sdp(40)), int(VisualConfig.sdp(40)))
             center_x = self.battle_widget.center_x + rand_x
             center_y = self.battle_widget.center_y + rand_y
         else:
@@ -539,7 +538,7 @@ class VisualEngine(FloatLayout):
             center_x=center_x, 
             center_y=center_y, 
             angle=angle, 
-            size=(dp(80), dp(112)), 
+            size=(VisualConfig.CARD_W, VisualConfig.CARD_H), 
             duration=VisualConfig.PLAY_SPEED, 
             t='out_quad'
         )
@@ -547,7 +546,7 @@ class VisualEngine(FloatLayout):
         self.cards_on_table.append(target_widget)
 
     def _clear_table(self, data):
-        target_x = -dp(150)
+        target_x = -VisualConfig.sdp(150)
         target_y = self.height / 2
         for card in self.cards_on_table:
             anim = Animation(x=target_x, y=target_y, opacity=0, 
@@ -557,6 +556,7 @@ class VisualEngine(FloatLayout):
         self.cards_on_table = []
 
     def _on_resize(self, instance, value):
+        VisualConfig.update_scale(self.size)
         if hasattr(self, 'bg_rect'):
             self.bg_rect.pos = self.pos
             self.bg_rect.size = self.size
@@ -570,19 +570,34 @@ class VisualEngine(FloatLayout):
         if self.battle_widget:
             self.battle_widget.size_hint = (None, None)
             self.battle_widget.width = w * VisualConfig.BATTLE_AREA_WIDTH_RATIO
+            self.battle_widget.height = h * VisualConfig.BATTLE_AREA_HEIGHT_RATIO
             self.battle_widget.center_x = w / 2
             self.battle_widget.center_y = h * VisualConfig.BATTLE_AREA_Y_RATIO
+
+        if self.btn_action:
+            self.btn_action.size = (VisualConfig.sdp(120), VisualConfig.sdp(50))
+        for child in self.children:
+            if isinstance(child, GameButton) and child.text == "< Назад":
+                child.size = (VisualConfig.sdp(100), VisualConfig.sdp(50))
+            if isinstance(child, GameButton) and child.text == "Рахунок":
+                child.size = (VisualConfig.sdp(100), VisualConfig.sdp(50))
+        if hasattr(self, "suit_indicator") and self.suit_indicator:
+            self.suit_indicator.size = (VisualConfig.sdp(100), VisualConfig.sdp(100))
+            if self.suit_indicator.opacity == 0:
+                self.suit_indicator.font_size = VisualConfig.ssp(80)
 
         # Оновлюємо колоду, ТІЛЬКИ якщо вона не в процесі анімації
         # І якщо козир вже показаний, колода має бути збоку.
         if self.deck_widget and not self.is_deck_animating:
+            self.deck_widget.size = (VisualConfig.CARD_W, VisualConfig.CARD_H)
             # Якщо козир існує, значить початкова анімація завершена -> колода зліва
             if self.trump_widget:
                 self.deck_widget.center_x = w * VisualConfig.DECK_X_RATIO
                 self.deck_widget.center_y = h * VisualConfig.DECK_Y_RATIO
                 
                 # Козиря теж треба посунути
-                self.trump_widget.center_x = self.deck_widget.center_x + dp(40)
+                self.trump_widget.size = (VisualConfig.CARD_W, VisualConfig.CARD_H)
+                self.trump_widget.center_x = self.deck_widget.center_x + VisualConfig.sdp(40)
                 self.trump_widget.center_y = self.deck_widget.center_y
             else:
                 # Якщо козиря ще нема, можливо ми ще в фазі роздачі?
@@ -599,18 +614,31 @@ class VisualEngine(FloatLayout):
                 bots.append(hand_widget)
 
         if hero:
-            hero.width = min(w * VisualConfig.HERO_WIDTH_PERCENT, VisualConfig.HERO_MAX_WIDTH)
+            hero.width = min(w * VisualConfig.HERO_WIDTH_PERCENT, VisualConfig.sdp(VisualConfig.HERO_MAX_WIDTH))
             hero.center_x = w / 2
-            hero.y = VisualConfig.HERO_BOTTOM_OFFSET
+            hero.y = VisualConfig.sdp(VisualConfig.HERO_BOTTOM_OFFSET)
 
         if bots:
             count = len(bots)
             section_width = w / count
             for i, bot in enumerate(bots):
+                bot.width = min(
+                    VisualConfig.sdp(VisualConfig.BOT_HAND_BASE_WIDTH),
+                    w * VisualConfig.BOT_HAND_MAX_WIDTH_RATIO,
+                )
+                bot.height = min(
+                    VisualConfig.sdp(VisualConfig.BOT_HAND_BASE_HEIGHT),
+                    h * VisualConfig.BOT_HAND_MAX_HEIGHT_RATIO,
+                )
                 bot.center_x = (i * section_width) + (section_width / 2)
-                bot.top = h - VisualConfig.BOT_TOP_OFFSET
+                bot.top = h - VisualConfig.sdp(VisualConfig.BOT_TOP_OFFSET)
             for bot in bots:
                 bot.update_hand_layout()
+
+        if self.cards_on_table:
+            table_card_size = (VisualConfig.CARD_W, VisualConfig.CARD_H)
+            for card in self.cards_on_table:
+                card.size = table_card_size
 
     def _draw_cards_animation(self, data):
         p_id = data.get("player_id")
@@ -689,9 +717,9 @@ class VisualEngine(FloatLayout):
             return
 
         # Створюємо модальне вікно
-        view = ModalView(size_hint=(None, None), size=(dp(340), dp(110)), auto_dismiss=False)
+        view = ModalView(size_hint=(None, None), size=(VisualConfig.sdp(340), VisualConfig.sdp(110)), auto_dismiss=False)
         
-        layout = BoxLayout(orientation='horizontal', padding=dp(10), spacing=dp(10))
+        layout = BoxLayout(orientation='horizontal', padding=VisualConfig.sdp(10), spacing=VisualConfig.sdp(10))
         
         # Використовуємо білі кнопки з кольоровим текстом для кращого контрасту
         suits = [
@@ -704,7 +732,7 @@ class VisualEngine(FloatLayout):
         for s in suits:
             btn = Button(
                 text=s['symbol'],
-                font_size=dp(50),      # Збільшив шрифт
+                font_size=VisualConfig.ssp(50),      # Збільшив шрифт
                 font_name='DejaVuSans',# !!! ВАЖЛИВО: Шрифт з підтримкою символів
                 background_normal='',  # Прибирає стандартну сіру текстуру
                 background_color=(0.95, 0.95, 0.95, 1), # Світло-сірий (майже білий) фон
@@ -732,8 +760,8 @@ class VisualEngine(FloatLayout):
         if not self.hero_widget or self.hero_widget.player_id != player_id:
             return
 
-        view = ModalView(size_hint=(None, None), size=(dp(400), dp(150)), auto_dismiss=False)
-        layout = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(10))
+        view = ModalView(size_hint=(None, None), size=(VisualConfig.sdp(400), VisualConfig.sdp(150)), auto_dismiss=False)
+        layout = BoxLayout(orientation='vertical', padding=VisualConfig.sdp(20), spacing=VisualConfig.sdp(10))
 
         # Кнопка множення
         btn_mult = GameButton(text=f"Помножити ворогів (x{mult_val})")
@@ -779,7 +807,7 @@ class VisualEngine(FloatLayout):
         btn.size_hint = (None, None) 
         # ===================================
         
-        btn.size = (dp(100), dp(50))
+        btn.size = (VisualConfig.sdp(100), VisualConfig.sdp(50))
         btn.pos_hint = {'right': 0.98, 'top': 0.98} # Правий верхній кут
         btn.background_color = (0.5, 0.5, 0.5, 1)   # Сірий колір
         
@@ -805,11 +833,11 @@ class VisualEngine(FloatLayout):
                 return # Чекаємо відповіді від адаптера, який викличе цю функцію знову з даними
 
         view = ModalView(size_hint=(0.8, 0.6), auto_dismiss=not is_round_end)
-        layout = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(10))
+        layout = BoxLayout(orientation='vertical', padding=VisualConfig.sdp(20), spacing=VisualConfig.sdp(10))
 
         # Заголовок
         title_text = "Результати раунду" if is_round_end else "Поточний рахунок"
-        layout.add_widget(Label(text=title_text, font_size=dp(24), bold=True, size_hint_y=0.2))
+        layout.add_widget(Label(text=title_text, font_size=VisualConfig.ssp(24), bold=True, size_hint_y=0.2))
 
         # Список гравців
         for p in players_data:
@@ -818,7 +846,7 @@ class VisualEngine(FloatLayout):
             if p['score'] > 225: score_text += " (Вибув!)"
             elif p['score'] == 0 and p.get('just_reset', False): score_text += " (Золоті 225!)"
             
-            lbl = Label(text=score_text, font_size=dp(18))
+            lbl = Label(text=score_text, font_size=VisualConfig.ssp(18))
             layout.add_widget(lbl)
 
         # Кнопка дії
@@ -899,10 +927,10 @@ class VisualEngine(FloatLayout):
             # Анімація появи (Pop effect)
             self.suit_indicator.opacity = 1
             # Скидаємо шрифт перед анімацією (замість scale)
-            self.suit_indicator.font_size = dp(10)
+            self.suit_indicator.font_size = VisualConfig.ssp(10)
             
-            anim = Animation(font_size=dp(100), duration=0.2, t='out_back') + \
-                   Animation(font_size=dp(80), duration=0.1)
+            anim = Animation(font_size=VisualConfig.ssp(100), duration=0.2, t='out_back') + \
+                   Animation(font_size=VisualConfig.ssp(80), duration=0.1)
             anim.start(self.suit_indicator)
 
     def _hide_ordered_suit(self, data):

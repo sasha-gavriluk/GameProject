@@ -1,8 +1,8 @@
 import asyncio
-
-from kivy.metrics import dp
 from gui.NetworkBridge import net
-from gui.sсreen.BaseScreen import BaseScreen
+from gui.screen.BaseScreen import BaseScreen
+from gui.config.Configs import VisualConfig
+from gui.utils.Responsive import bind_scaled_property, bind_scaled_padding
 
 class GameScreen(BaseScreen):
     def __init__(self, ui_manager, controller, **kwargs):
@@ -21,8 +21,8 @@ class GameScreen(BaseScreen):
         self.ui.add("main_box", "BoxLayout", 
                     parent="game_anchor",
                     orientation="vertical",
-                    spacing=dp(10),
-                    padding=dp(20),
+                    spacing=VisualConfig.sdp(10),
+                    padding=VisualConfig.sdp(20),
                     size_hint=(1, 1)) # На весь екран
 
         # === ВЕРХНЯ ЧАСТИНА: ІНФО ПРО КІМНАТУ ===
@@ -30,10 +30,10 @@ class GameScreen(BaseScreen):
                     parent="main_box", 
                     orientation="vertical", 
                     size_hint_y=None, 
-                    height=dp(100))
+                    height=VisualConfig.sdp(100))
         
-        self.ui.add("lbl_room_title", "TitleLabel", parent="info_box", text="КІМНАТА", font_size="20sp", height=dp(30))
-        self.ui.add("lbl_room_id", "Label", parent="info_box", text="---", font_size="40sp", bold=True, color=(0, 1, 0, 1))
+        self.ui.add("lbl_room_title", "TitleLabel", parent="info_box", text="КІМНАТА", font_size=20, height=30)
+        self.ui.add("lbl_room_id", "Label", parent="info_box", text="---", font_size=VisualConfig.ssp(40), bold=True, color=(0, 1, 0, 1))
 
         # === СЕРЕДНЯ ЧАСТИНА: ЧАТ (SCROLLVIEW) ===
         # Створюємо фон для чату (можна через canvas, але поки просто контейнер)
@@ -50,7 +50,7 @@ class GameScreen(BaseScreen):
                     # parent="chat_scroll", <-- UIManager поки не вміє додавати напряму в ScrollView через add()
                     # Тому ми додамо його вручну після build, або використаємо BoxLayout всередині
                     text="Чат розпочато...\n",
-                    font_size="16sp",
+                    font_size=VisualConfig.ssp(16),
                     halign="left",
                     valign="bottom",
                     markup=True,
@@ -60,9 +60,9 @@ class GameScreen(BaseScreen):
         self.ui.add("input_box", "BoxLayout", 
                     parent="main_box", 
                     orientation="horizontal", 
-                    spacing=dp(10), 
+                    spacing=VisualConfig.sdp(10), 
                     size_hint_y=None, 
-                    height=dp(50))
+                    height=VisualConfig.sdp(50))
 
         self.ui.add("inp_chat", "GameTextInput", 
                     parent="input_box", 
@@ -78,9 +78,9 @@ class GameScreen(BaseScreen):
         self.ui.add("controls_box", "BoxLayout", 
                     parent="main_box", 
                     orientation="horizontal", 
-                    spacing=dp(20), 
+                    spacing=VisualConfig.sdp(20), 
                     size_hint_y=None, 
-                    height=dp(60))
+                    height=VisualConfig.sdp(60))
 
         self.ui.add("btn_start", "MenuButton", parent="controls_box", text="Почати гру", disabled=True)
         self.ui.add("btn_leave", "MenuButton", parent="controls_box", text="Вийти")
@@ -91,6 +91,21 @@ class GameScreen(BaseScreen):
         self.ui.set_action("btn_leave", "on_release", self.leave_room)
 
         self.ui.build()
+
+        main_box = self.ui.registry["main_box"]
+        bind_scaled_property(main_box, "spacing", 10)
+        bind_scaled_padding(main_box, 20)
+
+        info_box = self.ui.registry["info_box"]
+        bind_scaled_property(info_box, "height", 100)
+
+        input_box = self.ui.registry["input_box"]
+        bind_scaled_property(input_box, "spacing", 10)
+        bind_scaled_property(input_box, "height", 50)
+
+        controls_box = self.ui.registry["controls_box"]
+        bind_scaled_property(controls_box, "spacing", 20)
+        bind_scaled_property(controls_box, "height", 60)
 
         # === РУЧНІ ПРИВ'ЯЗКИ (Те, що складніше через UIManager) ===
         
