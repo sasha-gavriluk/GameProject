@@ -91,6 +91,9 @@ class GameEngine:
                     card = self.deck.deal()
                     player.receive_card(card)
         
+        if hasattr(self.rules, "set_starting_player"):
+            self.rules.set_starting_player(engine=self)
+        
         # Сповіщаємо візуал, що треба намалювати карти в руках
         self.notify("DEAL_CARDS")
 

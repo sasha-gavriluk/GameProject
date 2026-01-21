@@ -53,12 +53,22 @@ class BotPlayer(Player):
         for rank in priority_ranks:
             candidates = [c for c in legal_cards if c.rank == rank]
             if candidates:
+                # Якщо можемо — кидаємо кілька карт одного рангу
+                if len(candidates) > 1:
+                    return candidates
                 # Якщо це Валет, бот має вибрати масть. 
                 # (Логіка вибору масті вже є в правилах BridgeRules або буде рандомною при виконанні)
                 return candidates[0]
 
         # Якщо немає спецкарт, кидаємо ту, що дає найменше очок (або найбільше, залежить від тактики)
         # У Бріджі ми хочемо позбутися карт.
+        # Якщо є кілька однакового рангу — кидаємо всі
+        rank_groups = {}
+        for c in legal_cards:
+            rank_groups.setdefault(c.rank, []).append(c)
+        for cards in rank_groups.values():
+            if len(cards) > 1:
+                return cards
         return legal_cards[0]
 
     # --- СТРАТЕГІЯ ДЛЯ ДУРАКА ---
@@ -81,7 +91,23 @@ class BotPlayer(Player):
         table = engine.table
         
         if not table:
-            return self._get_min_card(self.hand, trump_suit, rules)
+            # Спочатку пробуємо кинути кілька карт одного рангу, якщо це легально
+            rank_groups = {}
+            for c in self.hand:
+                rank_groups.setdefault(c.rank, []).append(c)
+            for cards in rank_groups.values():
+                if len(cards) > 1 and rules.is_legal_move(cards, self, table=engine.table, engine=engine):
+                    return cards
+
+            # Інакше кидаємо найменшу легальну карту
+            def sort_key(c):
+                is_trump = (c.suit == trump_suit)
+                value = rules.ranks_values.get(c.rank, 0) if hasattr(rules, 'ranks_values') else 0
+                return (is_trump, value)
+            for card in sorted(self.hand, key=sort_key):
+                if rules.is_legal_move(card, self, table=engine.table, engine=engine):
+                    return card
+            return None
 
         ranks_on_table = {c.rank for c in table}
         candidates = [c for c in self.hand if c.rank in ranks_on_table]
@@ -89,7 +115,22 @@ class BotPlayer(Player):
         if not candidates:
             return "pass"
 
-        return self._get_min_card(candidates, trump_suit, rules)
+        rank_groups = {}
+        for c in candidates:
+            rank_groups.setdefault(c.rank, []).append(c)
+        for cards in rank_groups.values():
+            if len(cards) > 1 and rules.is_legal_move(cards, self, table=engine.table, engine=engine):
+                return cards
+
+        def sort_key(c):
+            is_trump = (c.suit == trump_suit)
+            value = rules.ranks_values.get(c.rank, 0) if hasattr(rules, 'ranks_values') else 0
+            return (is_trump, value)
+        for card in sorted(candidates, key=sort_key):
+            if rules.is_legal_move(card, self, table=engine.table, engine=engine):
+                return card
+
+        return "pass"
 
     def _defense_logic(self, engine, rules, trump_suit):
         """Логіка захисту"""

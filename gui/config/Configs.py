@@ -25,8 +25,8 @@ class VisualConfig:
         card_w = max(min_w, min(base_w, max_w))
         cls.CARD_W = card_w
         cls.CARD_H = card_w * cls.CARD_ASPECT_RATIO
-        cls.BOT_CARD_W = cls.CARD_W * 0.5
-        cls.BOT_CARD_H = cls.CARD_H * 0.5
+        cls.BOT_CARD_W = cls.CARD_W * 0.3
+        cls.BOT_CARD_H = cls.CARD_H * 0.3
 
     @classmethod
     def bind_to_window(cls):
@@ -79,7 +79,7 @@ class VisualConfig:
     # Зона Бою
     BATTLE_AREA_Y_RATIO = 0.5 
     BATTLE_AREA_WIDTH_RATIO = 0.58
-    BATTLE_AREA_HEIGHT_RATIO = 0.28
+    BATTLE_AREA_HEIGHT_RATIO = 0.40
 
     # Колода
     DECK_X_RATIO = 0.075           
@@ -89,10 +89,18 @@ class VisualConfig:
     # Боти
     BOT_TOP_OFFSET = 10        
     MAX_VISIBLE_BOT_CARDS = 6      
-    BOT_HAND_BASE_WIDTH = 120
-    BOT_HAND_BASE_HEIGHT = 160
-    BOT_HAND_MAX_WIDTH_RATIO = 0.28
-    BOT_HAND_MAX_HEIGHT_RATIO = 0.22
+    BOT_HAND_BASE_WIDTH = 96
+    BOT_HAND_BASE_HEIGHT = 128
+    BOT_HAND_MAX_WIDTH_RATIO = 0.224
+    BOT_HAND_MAX_HEIGHT_RATIO = 0.176
+    BOT_ROW_WIDTH_RATIO = 0.7
+    BOT_ARC_START_DEG = 180
+    BOT_ARC_END_DEG = 0
+    BOT_ARC_RX_RATIO = 0.35
+    BOT_ARC_RY_RATIO = 0.15
+    BOT_ARC_CENTER_Y_RATIO = 0.86
+    BOT_MIN_SCALE = 0.7
+    BOT_ARC_SPACING_RATIO = 0.9
     
     # === ДОДАЙ ЦЕЙ РЯДОК ===
     SHOW_BOT_CARD_COUNT = True  # Показувати лічильник карт (x6) над ботом

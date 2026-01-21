@@ -56,23 +56,75 @@ class DurakRules(GameRules):
         self.transfer_allowed = True
         self.bout_ended_with_take = False
 
+    def set_starting_player(self, **kwargs):
+        engine = kwargs.get('engine')
+        if not engine or not self.trump_suit:
+            return
+        best_idx = None
+        best_val = None
+        best_card = None
+        for idx, player in enumerate(engine.players):
+            trumps = [c for c in player.hand if c.suit == self.trump_suit]
+            if not trumps:
+                continue
+            min_card = min(trumps, key=lambda c: self.ranks_values.get(c.rank, 0))
+            min_val = self.ranks_values.get(min_card.rank, 0)
+            if best_val is None or min_val < best_val:
+                best_val = min_val
+                best_idx = idx
+                best_card = min_card
+        if best_idx is not None:
+            engine.active_player_idx = best_idx
+            if best_card:
+                engine.extra_data['starting_trump'] = {
+                    'player_id': engine.players[best_idx].player_id,
+                    'suit': best_card.suit,
+                    'rank': best_card.rank
+                }
+        self.defender_idx = (engine.active_player_idx + 1) % len(engine.players)
+        self.pending_attacks = []
+        self.transfer_allowed = True
+
     def is_legal_move(self, action, player, **kwargs):
         table = kwargs.get('table')
         engine = kwargs.get('engine')
         
         player_idx = engine.players.index(player)
         is_defender = (player_idx == self.defender_idx)
+        total_players = len(engine.players)
+        defender = engine.players[self.defender_idx] if self.defender_idx is not None else None
+        max_cards_on_table = 6
+        if defender:
+            max_cards_on_table = min(6, len(defender.hand))
+
+        def is_allowed_attacker():
+            if not self.settings.get('neighbors_only', True):
+                return True
+            if total_players <= 2:
+                return True
+            left = (self.defender_idx - 1) % total_players
+            right = (self.defender_idx + 1) % total_players
+            return player_idx in (left, right)
         
         if isinstance(action, str):
             if action == 'take': return True # Брати можна завжди
         
             if action == 'pass':
+                # "Бито" може сказати тільки атакуючий, коли відбито всі атаки
+                if is_defender:
+                    return False
+                if not table:
+                    return False
+                if len(self.pending_attacks) > 0:
+                    return False
                 return True
 
         cards_played = action if isinstance(action, list) else [action]
 
         for c in cards_played:
             if c not in player.hand: return False
+        if len(table) + len(cards_played) > max_cards_on_table:
+            return False
 
         if is_defender:
             if len(cards_played) > len(self.pending_attacks):
@@ -104,6 +156,10 @@ class DurakRules(GameRules):
             return True
 
         else:
+            if not is_allowed_attacker():
+                return False
+            if not self.settings.get('allow_overthrow', True) and table:
+                return False
             if not table:
                 first_rank = cards_played[0].rank
                 for c in cards_played:
@@ -176,26 +232,37 @@ class DurakRules(GameRules):
     def should_switch_turn(self, action, player, **kwargs):
         engine = kwargs.get('engine')
         total_players = len(engine.players)
-        
+
+        def next_with_cards(start_idx, exclude_idx=None):
+            for i in range(total_players):
+                idx = (start_idx + i) % total_players
+                if exclude_idx is not None and idx == exclude_idx:
+                    continue
+                if len(engine.players[idx].hand) > 0:
+                    return idx
+            return start_idx
+
         if self.is_transfer_move:
-            self.defender_idx = (engine.active_player_idx + 1) % total_players
+            self.defender_idx = next_with_cards(engine.active_player_idx + 1)
             return self.defender_idx
 
         if action == "take":
             current_defender = engine.active_player_idx
-            next_attacker = (current_defender + 1) % total_players
-            self.defender_idx = (next_attacker + 1) % total_players 
+            next_attacker = next_with_cards(current_defender + 1, exclude_idx=None)
+            self.defender_idx = next_with_cards(next_attacker + 1)
             return next_attacker
 
         if action == "pass":
-            next_attacker = self.defender_idx
-            self.defender_idx = (next_attacker + 1) % total_players
+            next_attacker = next_with_cards(self.defender_idx, exclude_idx=None)
+            self.defender_idx = next_with_cards(next_attacker + 1)
             return next_attacker
 
         if len(self.pending_attacks) == 0:
-            attacker_idx = (self.defender_idx - 1) % total_players
+            attacker_idx = next_with_cards(self.defender_idx + 1, exclude_idx=self.defender_idx)
             return attacker_idx
         else:
+            if len(engine.players[self.defender_idx].hand) == 0:
+                self.defender_idx = next_with_cards(self.defender_idx + 1)
             return self.defender_idx
 
     def post_move_cleanup(self, **kwargs):
