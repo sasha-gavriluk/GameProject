@@ -92,40 +92,96 @@ class VisualEngine(FloatLayout):
             btn.bind(on_release=lambda x: self.go_back_callback())
             self.add_widget(btn)
 
-    def execute_instruction(self, instruction):
+    # === ОНОВЛЕНИЙ МЕТОД ВИКОНАННЯ КОМАНД ===
+    def execute_instruction(self, instruction, on_complete=None):
         cmd = instruction.get("cmd")
+        
+        # Функція завершення, яку ми викликаємо коли анімація готова
+        def done(*args):
+            if on_complete: on_complete()
 
-        if cmd == "SETUP_TABLE": self._setup_table(instruction)
-        elif cmd == "INITIAL_DEAL": self._initial_deal(instruction)
-        elif cmd == "SYNC_HANDS": self._sync_hands(instruction)
-        elif cmd == "PLAY_CARD": self._play_card(instruction)
-        elif cmd == "CLEAR_TABLE": self._clear_table(instruction)
-        elif cmd == "UPDATE_CONTROLS": self._update_controls(instruction)
-        elif cmd == "DRAW_CARDS_ANIMATION": self._draw_cards_animation(instruction)
-        elif cmd == "TAKE_CARDS": self._animate_take_cards(instruction)
-        elif cmd == "UPDATE_TURN": self._update_turn_label(instruction)
-        elif cmd == "ASK_THROW": self._show_throw_confirm()
-        elif cmd == "SHOW_PLAYER_COUNT": self._show_player_count_popup(instruction)
-        elif cmd == "SHOW_ERROR": print(f"[VisualEngine] Error: {instruction.get('text')}")
-        elif cmd == "SHOW_WINNER": self._show_winner_popup(instruction)
-        elif cmd == "SHOW_SUIT_SELECTOR": 
-            self.show_suit_selection(instruction.get("player_id"))
-        elif cmd == "SHOW_BONUS_SELECTOR":
-            self.show_jack_bonus_selection(
-                instruction.get("player_id"), 
-                instruction.get("mult"), 
-                instruction.get("sub")
-            )
-        elif cmd == "SHOW_SCORES":
-            self.show_score_popup(
-                is_round_end=instruction.get("is_round_end"),
-                players_data=instruction.get("scores")
-            )
+        # --- Команди з анімацією ---
+        if cmd == "INITIAL_DEAL": 
+            # Роздача займає час, тому done викликаємо з затримкою
+            duration = self._initial_deal(instruction)
+            Clock.schedule_once(done, duration)
+
+        elif cmd == "PLAY_CARD": 
+            self._play_card(instruction, callback=done)
+
+        elif cmd == "TAKE_CARDS": 
+            self._animate_take_cards(instruction, callback=done)
+            
+        elif cmd == "DRAW_CARDS_ANIMATION": 
+            duration = self._draw_cards_animation(instruction)
+            Clock.schedule_once(done, duration)
+            
         elif cmd == "ANIMATE_RESHUFFLE":
-            self._animate_reshuffle_table(instruction)
-        elif cmd == "SHOW_ORDERED_SUIT": self._show_ordered_suit(instruction)
-        elif cmd == "HIDE_ORDERED_SUIT": self._hide_ordered_suit(instruction)
-        else: print(f"[VisualEngine] Невідома команда: {cmd}")
+            self._animate_reshuffle_table(instruction, callback=done)
+        
+        elif cmd == "CHOOSING_DEALER":
+             self._animate_dealer_selection(
+                 instruction.get("dealer_idx"), 
+                 instruction.get("is_random"), 
+                 callback=done
+             )
+
+        # --- Миттєві команди (UI) ---
+        else:
+            if cmd == "SETUP_TABLE": self._setup_table(instruction)
+            elif cmd == "SYNC_HANDS": self._sync_hands(instruction)
+            elif cmd == "CLEAR_TABLE": self._clear_table(instruction)
+            elif cmd == "UPDATE_CONTROLS": self._update_controls(instruction)
+            elif cmd == "UPDATE_TURN": self._update_turn_label(instruction)
+            elif cmd == "ASK_THROW": self._show_throw_confirm()
+            elif cmd == "SHOW_PLAYER_COUNT": self._show_player_count_popup(instruction)
+            elif cmd == "SHOW_ERROR": print(f"Error: {instruction.get('text')}")
+            elif cmd == "SHOW_WINNER": self._show_winner_popup(instruction)
+            elif cmd == "SHOW_SUIT_SELECTOR": self.show_suit_selection(instruction.get("player_id"))
+            elif cmd == "SHOW_BONUS_SELECTOR": self.show_jack_bonus_selection(instruction.get("player_id"), instruction.get("mult"), instruction.get("sub"))
+            elif cmd == "SHOW_SCORES": self.show_score_popup(instruction.get("is_round_end"), instruction.get("scores"))
+            elif cmd == "SHOW_ORDERED_SUIT": self._show_ordered_suit(instruction)
+            elif cmd == "HIDE_ORDERED_SUIT": self._hide_ordered_suit(instruction)
+            
+            # Одразу повідомляємо, що команда виконана
+            done()
+
+    def _animate_dealer_selection(self, target_idx, is_random, callback):
+        if not self.player_widgets_list or target_idx is None:
+            if callback: callback()
+            return
+
+        target_idx = target_idx % len(self.player_widgets_list)
+        steps = []
+        num_players = len(self.player_widgets_list)
+        
+        if is_random:
+            total_steps = (num_players * 2) + target_idx
+            base_delay = 0.1
+            for i in range(total_steps + 1):
+                idx = i % num_players
+                if i > total_steps - 5:
+                    delay = base_delay + (0.05 * (5 - (total_steps - i)))
+                else:
+                    delay = base_delay
+                steps.append((idx, delay))
+        else:
+            steps = [(target_idx, 0.8)]
+
+        def play_step(step_index):
+            if step_index >= len(steps):
+                for w in self.player_widgets_list: w.opacity = 1.0
+                if callback: callback()
+                return
+
+            p_idx, duration = steps[step_index]
+            for i, w in enumerate(self.player_widgets_list):
+                if i == p_idx: w.opacity = 1.0
+                else: w.opacity = 0.5
+            
+            Clock.schedule_once(lambda dt: play_step(step_index + 1), duration)
+
+        play_step(0)
 
     def _update_turn_label(self, data):
         if not self.turn_label:
@@ -229,6 +285,9 @@ class VisualEngine(FloatLayout):
         deck_size = int(data.get("deck_size", 52))
         if game_type == "DURAK":
             max_players = max(2, deck_size // 6)
+        if game_type == "WAR":
+            max_players = 2
+            current = 2
         if current < 2:
             current = 2
         if current > max_players:
@@ -236,19 +295,27 @@ class VisualEngine(FloatLayout):
 
         view = ModalView(size_hint=(None, None), size=(VisualConfig.sdp(560), VisualConfig.sdp(400)), auto_dismiss=False)
         layout = BoxLayout(orientation='vertical', padding=VisualConfig.sdp(16), spacing=VisualConfig.sdp(12))
-        title = Label(text="Кількість гравців", font_size=VisualConfig.ssp(20), size_hint_y=0.25)
+        title_text = "Налаштування гри" if game_type == "WAR" else "Кількість гравців"
+        title = Label(text=title_text, font_size=VisualConfig.ssp(20), size_hint_y=0.25)
         layout.add_widget(title)
-        hint = Label(text=f"Максимум: {max_players}", font_size=VisualConfig.ssp(16), size_hint_y=0.15)
-        layout.add_widget(hint)
+        hint = None
+        btn_minus = None
+        btn_plus = None
+        lbl_count = None
+        if game_type != "WAR":
+            hint = Label(text=f"Максимум: {max_players}", font_size=VisualConfig.ssp(16), size_hint_y=0.15)
+            layout.add_widget(hint)
 
-        counter_row = BoxLayout(orientation='horizontal', spacing=VisualConfig.sdp(12), size_hint_y=0.22)
-        btn_minus = GameButton(text="-", size_hint=(0.22, 1))
-        lbl_count = Label(text=str(current), font_size=VisualConfig.ssp(24), size_hint=(0.56, 1))
-        btn_plus = GameButton(text="+", size_hint=(0.22, 1))
-        counter_row.add_widget(btn_minus)
-        counter_row.add_widget(lbl_count)
-        counter_row.add_widget(btn_plus)
-        layout.add_widget(counter_row)
+            counter_row = BoxLayout(orientation='horizontal', spacing=VisualConfig.sdp(12), size_hint_y=0.22)
+            btn_minus = GameButton(text="-", size_hint=(0.22, 1))
+            lbl_count = Label(text=str(current), font_size=VisualConfig.ssp(24), size_hint=(0.56, 1))
+            btn_plus = GameButton(text="+", size_hint=(0.22, 1))
+            counter_row.add_widget(btn_minus)
+            counter_row.add_widget(lbl_count)
+            counter_row.add_widget(btn_plus)
+            layout.add_widget(counter_row)
+        else:
+            layout.add_widget(Label(text="Гравців: 2", font_size=VisualConfig.ssp(18), size_hint_y=0.15))
 
         mode_group = None
         throw_group = None
@@ -306,6 +373,20 @@ class VisualEngine(FloatLayout):
 
             deck_group["36"].bind(on_release=lambda *_: recalc_max_players())
             deck_group["52"].bind(on_release=lambda *_: recalc_max_players())
+        elif game_type == "WAR":
+            layout.add_widget(Label(text="Колода", font_size=VisualConfig.ssp(18), size_hint_y=0.2))
+            deck_row = BoxLayout(orientation='horizontal', spacing=VisualConfig.sdp(10), size_hint_y=0.22)
+            deck_group = {
+                "52": ToggleButton(text="52", group="deck_group", font_size=VisualConfig.ssp(16)),
+                "36": ToggleButton(text="36", group="deck_group", font_size=VisualConfig.ssp(16)),
+            }
+            for btn in deck_group.values():
+                deck_row.add_widget(btn)
+            layout.add_widget(deck_row)
+            if deck_size == 36:
+                deck_group["36"].state = "down"
+            else:
+                deck_group["52"].state = "down"
 
         btn_start = GameButton(text="Почати", size_hint_y=0.22)
         layout.add_widget(btn_start)
@@ -313,11 +394,14 @@ class VisualEngine(FloatLayout):
 
         def update_count(delta):
             nonlocal current
+            if not lbl_count:
+                return
             current = max(2, min(max_players, current + delta))
             lbl_count.text = str(current)
 
-        btn_minus.bind(on_release=lambda *_: update_count(-1))
-        btn_plus.bind(on_release=lambda *_: update_count(1))
+        if btn_minus and btn_plus:
+            btn_minus.bind(on_release=lambda *_: update_count(-1))
+            btn_plus.bind(on_release=lambda *_: update_count(1))
         btn_start.bind(on_release=lambda *_: self._on_player_count_confirm(view, current, game_type, mode_group, throw_group, deck_group))
 
         view.open()
@@ -342,9 +426,9 @@ class VisualEngine(FloatLayout):
                     "allow_overthrow": True,
                     "first_bout_5": False
                 }
-                if deck_group:
-                    if deck_group["36"].state == "down":
-                        chosen_deck = 36
+            if deck_group:
+                if deck_group.get("36") and deck_group["36"].state == "down":
+                    chosen_deck = 36
             self.event_callback({
                 'type': 'ui_action',
                 'action': 'set_player_count',
@@ -375,49 +459,33 @@ class VisualEngine(FloatLayout):
 
     def _setup_table(self, data):
         self.clear_widgets()
-
         self.input_locked = True
-
         self.game_type = data.get("game_type")
 
         if self.game_type == "BRIDGE":
             self._draw_score_button()
 
         self.players_map = {}
+        self.player_widgets_list = [] 
         self.cards_on_table = []
         self.durak_pairs = []
         self.trump_widget = None
         self.trump_suit = None
         self._draw_back_button()
 
-        self.suit_indicator = Label(
-            text="?", 
-            font_size=VisualConfig.ssp(80), 
-            font_name='DejaVuSans',
-            color=(1, 1, 1, 1),
-            outline_width=2,
-            outline_color=(0,0,0,1),
-            size_hint=(None, None), 
-            size=(VisualConfig.sdp(100), VisualConfig.sdp(100)),
-            pos_hint={'right': 0.97, 'center_y': 0.5}
-        )
+        self.suit_indicator = Label(text="?", font_size=VisualConfig.ssp(80), font_name='DejaVuSans', 
+                                    color=(1,1,1,1), outline_width=2, outline_color=(0,0,0,1),
+                                    size_hint=(None, None), size=(VisualConfig.sdp(100), VisualConfig.sdp(100)),
+                                    pos_hint={'right': 0.97, 'center_y': 0.5})
         self.suit_indicator.opacity = 0
         self.add_widget(self.suit_indicator)
         
-        self.turn_label = Label(
-            text="",
-            font_size=VisualConfig.ssp(18),
-            color=(1, 1, 1, 0.9),
-            size_hint=(None, None),
-            pos_hint={'x': 0.02, 'top': 0.90},
-        )
-        self.turn_label.bind(texture_size=lambda *_: setattr(self.turn_label, "size", self.turn_label.texture_size))
+        self.turn_label = Label(text="", font_size=VisualConfig.ssp(18), color=(1,1,1,0.9),
+                                size_hint=(None, None), pos_hint={'x': 0.02, 'top': 0.90})
         self.add_widget(self.turn_label)
         
-        # Отримуємо налаштування мульти-вибору
-        allow_multi = data.get("multi_select", True) # <--- Зчитуємо
+        allow_multi = data.get("multi_select", True)
         
-        # Кнопка дій
         self.btn_action = GameButton(text="Взяти")
         self.btn_action.size_hint = (None, None)
         self.btn_action.size = (VisualConfig.sdp(120), VisualConfig.sdp(50))
@@ -427,37 +495,27 @@ class VisualEngine(FloatLayout):
         self.btn_action.bind(on_release=self._on_action_click)
         self.add_widget(self.btn_action)
         
-        self.hero_widget = None
-
-        # Зона бою
         self.battle_widget = BattleAreaWidget()
         self.battle_widget.on_click_callback = self._on_battle_area_click
         self.add_widget(self.battle_widget)
 
-        # Гравці
         players_list = data.get("players", [])
         for p_data in players_list:
             p_id = p_data["id"]
             name = p_data["name"]
             is_hero = p_data["is_hero"]
-
-            # Передаємо multi_select у віджет руки
-            # Якщо це бот - йому все одно, але для однаковості можна передати False або те саме
             ms_setting = allow_multi if is_hero else False 
             
             hand = HandWidget(name=name, player_id=p_id, is_main_player=is_hero, multi_select=ms_setting)
-            
             self.add_widget(hand)
             self.players_map[p_id] = hand
+            self.player_widgets_list.append(hand)
             
             if is_hero:
                 self.hero_widget = hand
                 hand.bind(selected_cards=self._on_hero_card_selection)
 
-        # Колода
         self.deck_widget = DeckWidget()
-        self.deck_widget.pos_hint = {} 
-        self.is_deck_animating = True
         self.deck_widget.opacity = 0
         self.deck_widget.bind(on_release=self._on_deck_click)
         self.add_widget(self.deck_widget)
@@ -533,16 +591,13 @@ class VisualEngine(FloatLayout):
         hands_list = data.get("hands", [])
         trump_data = data.get("trump_card")
         starting_trump = data.get("starting_trump")
-        if trump_data:
-            self.trump_suit = trump_data.get("suit")
+        if trump_data: self.trump_suit = trump_data.get("suit")
         
         for p_data in hands_list:
-            p_id = p_data["player_id"]
-            hand = self.players_map.get(p_id)
+            hand = self.players_map.get(p_data["player_id"])
             if hand:
                 hand.cards = []
                 hand.clear_widgets()
-                if hasattr(hand, 'clean_canvas'): hand.clean_canvas()
                 if not hand.is_main_player: hand.setup_opponent_ui()
 
         deal_queue = []
@@ -555,49 +610,33 @@ class VisualEngine(FloatLayout):
 
         delay = 0.5 
         step = 0.2
-        
-        cards_to_deal = len(deal_queue)
         deck_remainder = data.get("deck_count", 0)
+        
         if self.deck_widget:
-            self.deck_widget.cards_count = deck_remainder + cards_to_deal
+            self.deck_widget.cards_count = deck_remainder + len(deal_queue)
             self.deck_widget.update_canvas()
 
         for p_id, card_info in deal_queue:
-            Clock.schedule_once(
-                lambda dt, pid=p_id, c=card_info: self._fly_card_from_deck(pid, c), 
-                delay
-            )
+            Clock.schedule_once(lambda dt, pid=p_id, c=card_info: self._fly_card_from_deck(pid, c), delay)
             delay += step
 
-        # === ЛОГІКА ПЕРЕМІЩЕННЯ КОЛОДИ ===
-        
-        # Час закінчення роздачі карт
         completion_time = delay + 0.5
 
         if trump_data:
             if deck_remainder == 0:
-                Clock.schedule_once(
-                    lambda dt: self._move_deck_and_trump_to_side(), 
-                    completion_time
-                )
+                Clock.schedule_once(lambda dt: self._move_deck_and_trump_to_side(), completion_time)
             else:
-                # Якщо є козир (Дурак) -> Запускаємо послідовність з козирем
-                Clock.schedule_once(
-                    lambda dt: self._animate_trump_sequence(trump_data), 
-                    completion_time
-                )
+                Clock.schedule_once(lambda dt: self._animate_trump_sequence(trump_data), completion_time)
+                completion_time += 1.0 
         else:
-            # === FIX: Якщо немає козиря (Брідж/Війна) -> Просто рухаємо колоду вбік ===
-            Clock.schedule_once(
-                lambda dt: self._move_deck_and_trump_to_side(), 
-                completion_time
-            )
+            Clock.schedule_once(lambda dt: self._move_deck_and_trump_to_side(), completion_time)
         
         if starting_trump:
-            Clock.schedule_once(
-                lambda dt: self._show_starting_trump(starting_trump),
-                completion_time + 1.0
-            )
+            Clock.schedule_once(lambda dt: self._show_starting_trump(starting_trump), completion_time + 0.5)
+            completion_time += 2.0
+
+        return completion_time
+    
     def _animate_trump_sequence(self, trump_data):
         """1. Створює козиря під колодою. 2. Перевертає. 3. Відсуває все вбік."""
         if not self.deck_widget: return
@@ -765,7 +804,7 @@ class VisualEngine(FloatLayout):
             elif hasattr(hand_widget, 'clean_canvas'):
                  hand_widget.clean_canvas()
 
-    def _play_card(self, data):
+    def _play_card(self, data, callback=None):
         p_id = data.get("player_id")
         card_data = data.get("card")
         c_id_str = card_data.get("id")
@@ -773,12 +812,13 @@ class VisualEngine(FloatLayout):
         durak_is_defense = bool(data.get("durak_is_defense"))
         
         hand_widget = self.players_map.get(p_id)
-        if not hand_widget: return
+        if not hand_widget: 
+            if callback: callback()
+            return
 
         target_widget = None
         for c_widget in hand_widget.cards:
-            w_id = f"{c_widget.rank}_{c_widget.suit}"
-            if w_id == c_id_str:
+            if f"{c_widget.rank}_{c_widget.suit}" == c_id_str:
                 target_widget = c_widget
                 break
         
@@ -789,22 +829,21 @@ class VisualEngine(FloatLayout):
             self.add_widget(target_widget)
             Clock.schedule_once(lambda dt: setattr(target_widget, 'opacity', 1), 0.05)
         
-        # Переносимо карту на стіл
         if target_widget in hand_widget.cards:
             hand_widget.remove_card(target_widget)
             current_win_pos = target_widget.to_window(*target_widget.pos)
             if target_widget.parent: target_widget.parent.remove_widget(target_widget)
-            
-            # === ГОЛОВНА ЗМІНА ТУТ ===
-            # Ми кажемо карті: "Якщо на тебе клікнуть, викликай метод _on_battle_area_click"
-            # Це повністю імітує клік по порожньому столу.
-            # =========================
-
             self.add_widget(target_widget)
             target_widget.pos = self.to_widget(*current_win_pos)
         
         target_widget.on_click_action = self._on_battle_area_click
         target_widget.is_face_up = True
+
+        anim_duration = VisualConfig.PLAY_SPEED
+        anim = None
+        
+        target_x, target_y = self.center_x, self.center_y
+        target_angle = random.randint(-15,15)
 
         if is_durak:
             pair_idx = None
@@ -813,8 +852,7 @@ class VisualEngine(FloatLayout):
                     if pair.get("attack") and not pair.get("defense"):
                         pair_idx = i
                         break
-                if pair_idx is None:
-                    durak_is_defense = False
+                if pair_idx is None: durak_is_defense = False
 
             if durak_is_defense:
                 self.durak_pairs[pair_idx]["defense"] = target_widget
@@ -825,41 +863,31 @@ class VisualEngine(FloatLayout):
             positions = self._calc_durak_attack_positions(len(self.durak_pairs))
             offset_x = VisualConfig.CARD_W * 0.3
             offset_y = VisualConfig.CARD_H * 0.2
-            if positions:
+            
+            if positions and pair_idx < len(positions):
+                pos = positions[pair_idx]
                 if durak_is_defense:
-                    target_pos = (positions[pair_idx][0] + offset_x, positions[pair_idx][1] + offset_y)
+                    target_x, target_y = pos[0] + offset_x, pos[1] + offset_y
+                    target_angle = 0
                 else:
-                    target_pos = positions[pair_idx]
-                self._layout_durak_table(
-                    animate_card=target_widget,
-                    animate_pos=target_pos,
-                    animate_existing=True
-                )
-
-            self.cards_on_table.append(target_widget)
-            return
-
-        if self.battle_widget:
-            # (далі код анімації без змін)
-            rand_x = random.randint(-int(VisualConfig.sdp(30)), int(VisualConfig.sdp(30)))
-            rand_y = random.randint(-int(VisualConfig.sdp(40)), int(VisualConfig.sdp(40)))
-            center_x = self.battle_widget.center_x + rand_x
-            center_y = self.battle_widget.center_y + rand_y
+                    target_x, target_y = pos[0], pos[1]
+                    target_angle = 0
+                
+                self._layout_durak_table(animate_card=target_widget, animate_pos=(target_x, target_y), animate_existing=True)
+            
         else:
-            center_x, center_y = self.center_x, self.center_y
+            if self.battle_widget:
+                target_x = self.battle_widget.center_x + random.randint(-20, 20)
+                target_y = self.battle_widget.center_y + random.randint(-20, 20)
 
-        angle = random.randint(-15, 15)
-        anim = Animation(
-            center_x=center_x, 
-            center_y=center_y, 
-            angle=angle, 
-            size=(VisualConfig.CARD_W, VisualConfig.CARD_H), 
-            duration=VisualConfig.PLAY_SPEED, 
-            t='out_quad'
-        )
-        anim.start(target_widget)
+        anim = Animation(center_x=target_x, center_y=target_y, angle=target_angle,
+                         size=(VisualConfig.CARD_W, VisualConfig.CARD_H), duration=anim_duration, t='out_quad')
+        
         self.cards_on_table.append(target_widget)
-
+        
+        if callback: anim.bind(on_complete=lambda a, w: callback())
+        anim.start(target_widget)
+    
     def _clear_table(self, data):
         target_x = -VisualConfig.sdp(150)
         target_y = self.height / 2
@@ -1056,52 +1084,39 @@ class VisualEngine(FloatLayout):
     def _draw_cards_animation(self, data):
         p_id = data.get("player_id")
         cards_data = data.get("cards")
-        
-        # Параметри затримки між вильотом карт (щоб летіли не пачкою, а по одній)
         delay = 0
         step = 0.3
-        
         for card_info in cards_data:
-            # Використовуємо існуючий метод, який створює карту на колоді, 
-            # зменшує лічильник і відправляє карту гравцю.
-            Clock.schedule_once(
-                lambda dt, pid=p_id, c=card_info: self._fly_card_from_deck(pid, c), 
-                delay
-            )
+            Clock.schedule_once(lambda dt, pid=p_id, c=card_info: self._fly_card_from_deck(pid, c), delay)
             delay += step
+        return delay + 0.5
 
-    def _animate_take_cards(self, data):
-        """Карти летять зі столу в руку гравця"""
+    def _animate_take_cards(self, data, callback=None):
         p_id = data.get("player_id")
         hand_widget = self.players_map.get(p_id)
-        
         if not hand_widget or not self.cards_on_table:
+            if callback: callback()
             return
 
-        target_x = hand_widget.center_x
-        target_y = hand_widget.center_y
+        target_x, target_y = hand_widget.center_x, hand_widget.center_y
+        cards_count = len(self.cards_on_table)
+        completed = 0
+
+        def on_one_complete(a, w):
+            nonlocal completed
+            self.remove_widget(w)
+            completed += 1
+            if completed >= cards_count and callback:
+                callback()
 
         for card in self.cards_on_table:
-            card.selected = False 
-            
-            if card.parent:
-                card.parent.remove_widget(card)
+            card.selected = False
+            if card.parent: card.parent.remove_widget(card)
             self.add_widget(card)
             
-            # === ВИПРАВЛЕННЯ ТУТ ===
-            # Замість scale=0.5 використовуємо size=(0, 0)
-            # Це змусить карту зменшитись до зникнення
-            anim = Animation(
-                center_x=target_x, 
-                center_y=target_y, 
-                opacity=0, 
-                size=(0, 0),       # <--- Змінили scale на size
-                duration=0.6, 
-                t='in_back'
-            )
-            # =======================
-            
-            anim.bind(on_complete=lambda a, w: self.remove_widget(w))
+            anim = Animation(center_x=target_x, center_y=target_y, opacity=0, size=(0, 0),
+                             duration=0.6, t='in_back')
+            anim.bind(on_complete=on_one_complete)
             anim.start(card)
 
         self.cards_on_table = []
@@ -1306,42 +1321,39 @@ class VisualEngine(FloatLayout):
         if self.event_callback:
             self.event_callback({'type': 'ui_action', 'action': 'start_new_round'})
 
-    def _animate_reshuffle_table(self, data):
-        """Карти зі столу (крім верхньої) летять назад у колоду"""
+    def _animate_reshuffle_table(self, data, callback=None):
         if not self.deck_widget or not self.cards_on_table:
+            if callback: callback()
             return
             
         top_card_data = data.get("top_card")
         new_count = data.get("new_count", 0)
+        target_x, target_y = self.deck_widget.center_x, self.deck_widget.center_y
         
-        target_x = self.deck_widget.center_x
-        target_y = self.deck_widget.center_y
+        cards_to_move = [c for c in self.cards_on_table if not (c.suit == top_card_data['suit'] and c.rank == top_card_data['rank'])]
         
-        cards_to_keep = []
-        
-        for card in list(self.cards_on_table):
-            if card.suit == top_card_data['suit'] and card.rank == top_card_data['rank']:
-                cards_to_keep.append(card)
-                continue
-            
-            if card.parent:
-                card.parent.remove_widget(card)
-            self.add_widget(card) 
-            
-            # === ВИПРАВЛЕНО: замість scale використовуємо size ===
-            anim = Animation(
-                center_x=target_x,
-                center_y=target_y,
-                opacity=0,
-                size=(0, 0), # Замінено scale=0.5 на size=(0,0)
-                duration=0.6,
-                t='in_back'
-            )
-            anim.bind(on_complete=lambda a, w: self.remove_widget(w))
+        if not cards_to_move:
+            if callback: callback()
+            return
+
+        completed = 0
+        total = len(cards_to_move)
+
+        def on_one_complete(a, w):
+            nonlocal completed
+            self.remove_widget(w)
+            completed += 1
+            if completed >= total and callback:
+                callback()
+
+        for card in cards_to_move:
+            if card.parent: card.parent.remove_widget(card)
+            self.add_widget(card)
+            anim = Animation(center_x=target_x, center_y=target_y, opacity=0, size=(0, 0), duration=0.6, t='in_back')
+            anim.bind(on_complete=on_one_complete)
             anim.start(card)
             
-        self.cards_on_table = cards_to_keep
-        
+        self.cards_on_table = [c for c in self.cards_on_table if c not in cards_to_move]
         self.deck_widget.cards_count = new_count
         self.deck_widget.opacity = 1
         self.deck_widget.update_canvas()
