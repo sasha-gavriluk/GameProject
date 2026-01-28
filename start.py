@@ -2,8 +2,8 @@ from server.scode import GameServer
 import asyncio
 
 def main():
-    # Створюємо об'єкт сервера. За замовчуванням localhost:8765
-    server = GameServer()
+    # Створюємо об'єкт сервера. Слухаємо всі інтерфейси для локальної мережі.
+    server = GameServer(host="0.0.0.0")
     try:
         # Запускаємо асинхронну подію
         asyncio.run(server.start())

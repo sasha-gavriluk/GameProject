@@ -51,6 +51,7 @@ class AuthScreen(BaseScreen):
         # 5. Кнопки
         self.ui.add("btn_enter", "MenuButton", parent="auth_box", text="Вхід")
         self.ui.add("btn_reg", "MenuButton", parent="auth_box", text="Реєстрація")
+        self.ui.add("btn_find_server", "MenuButton", parent="auth_box", text="Пошук сервера")
         
         # Додаткова кнопка "Назад", щоб не застрягти
         self.ui.add("btn_back", "MenuButton", parent="auth_box", text="Назад")
@@ -58,6 +59,7 @@ class AuthScreen(BaseScreen):
         # 6. Дії
         self.ui.set_action("btn_enter", "on_release", self.do_login)
         self.ui.set_action("btn_reg", "on_release", self.do_register)
+        self.ui.set_action("btn_find_server", "on_release", self.do_find_server)
         self.ui.set_action("btn_back", "on_release", self.go_back)
 
         self.ui.build()
@@ -100,6 +102,25 @@ class AuthScreen(BaseScreen):
             # Тимчасово змінимо текст заголовка на помилку
             self.ui.registry["lbl_title"].text = "ПОМИЛКА ВХОДУ"
             self.ui.registry["lbl_title"].color = (1, 0, 0, 1) # Червоний
+
+    def do_find_server(self, instance):
+        btn = self.ui.registry["btn_find_server"]
+        btn.text = "Пошук..."
+        btn.disabled = True
+        asyncio.create_task(self._process_find_server(btn))
+
+    async def _process_find_server(self, btn):
+        found_ip = await net.find_local_server(port=game_settings.server_port)
+        btn.text = "Пошук сервера"
+        btn.disabled = False
+
+        if found_ip:
+            game_settings.server_ip = found_ip
+            self.ui.registry["lbl_title"].text = f"Сервер знайдено: {found_ip}"
+            self.ui.registry["lbl_title"].color = (0, 1, 0, 1)
+        else:
+            self.ui.registry["lbl_title"].text = "Сервер не знайдено"
+            self.ui.registry["lbl_title"].color = (1, 0, 0, 1)
 
     def do_register(self, instance):
         # 1. Беремо дані прямо з полів (не з налаштувань!)

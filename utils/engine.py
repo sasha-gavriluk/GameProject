@@ -66,10 +66,11 @@ class GameEngine:
     def add_player(self, player: Player):
         self.players.append(player)
 
-    def setup_game(self, deck_object):
+    def setup_game(self, deck_object, shuffle=True):
         """Підготовка до гри (перемішування, роздача)"""
         self.deck = deck_object
-        self.deck.shuffle()
+        if shuffle:
+            self.deck.shuffle()
         
         # Очищення рук перед новою грою
         for player in self.players:

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import websockets
+import socket
 from gui.utils.GameSettings import game_settings
 
 # Імпортуємо команди з твого серверного API, щоб не писати рядки вручну
@@ -72,6 +73,49 @@ class NetworkBridge:
             self.ws = None
             return False, {"message": f"Помилка: {str(e)}"}
 
+    async def _send_and_wait(self, command, payload_data, expected_types):
+        try:
+            await self._ensure_connection()
+            full_package = {
+                "command": command,
+                "payload": payload_data
+            }
+            await self.ws.send(json.dumps(full_package))
+            while True:
+                response = await self.ws.recv()
+                data = json.loads(response)
+                msg_type = data.get("type")
+                if msg_type in expected_types:
+                    return True, data
+                if msg_type == ServerCommands.ERROR:
+                    return True, data
+                if self.on_message_callback:
+                    self.on_message_callback(data)
+        except (ConnectionRefusedError, OSError):
+            self.ws = None
+            return False, {"message": "Сервер не доступний (Connection Refused)"}
+        except websockets.exceptions.ConnectionClosed:
+            print("[Network] З'єднання розірвано. Перепідключення...")
+            self.ws = None
+            return False, {"message": "З'єднання розірвано"}
+        except Exception as e:
+            print(f"[Network Error] {e}")
+            self.ws = None
+            return False, {"message": f"Помилка: {str(e)}"}
+
+    async def _send_only(self, command, payload_data):
+        try:
+            await self._ensure_connection()
+            full_package = {
+                "command": command,
+                "payload": payload_data
+            }
+            await self.ws.send(json.dumps(full_package))
+            return True
+        except Exception as e:
+            print(f"[Network Error] {e}")
+            return False
+
     async def connect_and_login(self):
         login = game_settings.login
         # Отримуємо "чистий" пароль (GameSettings його декодує з файлу)
@@ -116,7 +160,11 @@ class NetworkBridge:
         Повертає: (Success: bool, RoomID/Error: str)
         """
         # Payload пустий, бо сервер сам генерує ID
-        success, data = await self.send_request(ServerCommands.CREATE_ROOM, {})
+        success, data = await self._send_and_wait(
+            ServerCommands.CREATE_ROOM,
+            {},
+            {ServerCommands.ROOM_CREATED}
+        )
 
         if success and data.get("type") == ServerCommands.ROOM_CREATED:
             room_id = data.get("room_id")
@@ -162,9 +210,10 @@ class NetworkBridge:
 
         print(f"[Network] Спроба приєднання до кімнати: {room_id}")
 
-        success, data = await self.send_request(
-            ServerCommands.JOIN_ROOM, 
-            {"room_id": room_id}
+        success, data = await self._send_and_wait(
+            ServerCommands.JOIN_ROOM,
+            {"room_id": room_id},
+            {ServerCommands.JOIN_ROOM}
         )
 
         # Сервер має відповісти типом ROOM_JOINED або error
@@ -172,6 +221,48 @@ class NetworkBridge:
             return True, data.get("message", "Успішно приєднано")
         else:
             return False, data.get("message", "Не вдалося знайти кімнату")
+
+    async def request_room_state(self):
+        """Запит поточного стану кімнати"""
+        return await self._send_only(ServerCommands.GET_ROOM_STATE, {})
+
+    async def update_room_settings(self, settings):
+        """Оновлення налаштувань кімнати (тільки власник)"""
+        return await self._send_only(ServerCommands.UPDATE_SETTINGS, {"settings": settings})
+
+    async def toggle_ready(self):
+        """Перемикає готовність гравця"""
+        return await self._send_only(ServerCommands.READY_TOGGLE, {})
+
+    async def send_game_action(self, payload):
+        """Відправляє дію гравця на сервер"""
+        return await self._send_only(ServerCommands.GAME_ACTION, payload)
+
+    async def find_local_server(self, port=8765, timeout=1.0):
+        """Шукає сервер у локальній мережі через UDP discovery. Повертає IP або None."""
+        return await asyncio.to_thread(self._udp_discover, port, timeout)
+
+    def _get_local_ip(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+        finally:
+            sock.close()
+
+    def _udp_discover(self, port, timeout):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.settimeout(timeout)
+            sock.sendto(b"DISCOVER_SERVER", ("255.255.255.255", port))
+            data, addr = sock.recvfrom(1024)
+            if data.startswith(b"SERVER_HERE"):
+                return addr[0]
+        except Exception:
+            return None
+        finally:
+            sock.close()
 
     def start_listener(self, callback):
         """Запускає фоновий процес прослуховування"""

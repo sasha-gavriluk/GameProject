@@ -14,7 +14,7 @@ class GameSettings:
         "password_blob": "", # Змінили назву, щоб не плутати з чистим паролем
         "auto_login": False,
         "volume": 100,
-        "server_ip": "127.0.0.1", # Добавимо налаштування сервера
+        "server_ip": "192.168.1.223", # Добавимо налаштування сервера
         "server_port": 8765,
         "orientation": "portrait",
     }
@@ -81,9 +81,19 @@ class GameSettings:
     def server_ip(self):
         return self.loader.settings.get("server_ip", "127.0.0.1")
     
+    @server_ip.setter
+    def server_ip(self, value):
+        self.loader.settings["server_ip"] = value
+        self.loader.save_data()
+    
     @property
     def server_port(self):
         return self.loader.settings.get("server_port", 9090)
+
+    @server_port.setter
+    def server_port(self, value):
+        self.loader.settings["server_port"] = value
+        self.loader.save_data()
 
     @property
     def orientation(self):

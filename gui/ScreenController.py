@@ -6,6 +6,7 @@ from gui.screen.MainMenuScreen import MainMenuScreen
 from gui.screen.LobbyScreen import LobbyScreen
 from gui.screen.AuthScreen import AuthScreen
 from gui.screen.LocalGameSelectScreen import LocalGameSelectScreen
+from gui.screen.GameScreen import GameScreen
 from gui.screen.PlayGameScreen import PlayGameScreen  # <--- Новий імпорт
 class ScreenController(ScreenManager):
     def __init__(self, **kwargs):
@@ -17,6 +18,7 @@ class ScreenController(ScreenManager):
         self.add_widget(LobbyScreen(ui_manager=UIManager(), controller=self, name='lobby'))
         self.add_widget(AuthScreen(ui_manager=UIManager(), controller=self, name='auth'))
         self.add_widget(LocalGameSelectScreen(ui_manager=UIManager(), controller=self, name='local_select'))
+        self.add_widget(GameScreen(ui_manager=UIManager(), controller=self, name='game'))
         
         # Єдиний екран для гри
         self.add_widget(PlayGameScreen(ui_manager=UIManager(), controller=self, name='play_game'))
