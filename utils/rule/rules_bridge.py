@@ -4,7 +4,7 @@ from utils.engine import GameRules
 
 class BridgeRules(GameRules):
     def __init__(self):
-        self.initial_cards_count = 6
+        self.initial_cards_count = 5
         self.deck = None
         
         # Очки за карти (Оригінальна логіка)
@@ -212,229 +212,238 @@ class BridgeRules(GameRules):
             return True
             
         return False
+    
+    def _apply_card_effects(self, card, player=None, engine=None):
+        """
+        Застосовує ефекти карти до стану гри (Штрафи, Пропуски, Шістки).
+        Викликається і при звичайному ході, і при роздачі 'на стіл'.
+        """
+        # 1. Шістка - треба крити (ходити ще раз)
+        if card.rank == '6':
+            self.must_cover_six = True
+            # Якщо це відбувається під час гри, можна вивести лог
+            if player:
+                print(f"🔄 {player.name} поклав 6-ку і має ходити знову!")
+        else:
+            self.must_cover_six = False
+
+        # 2. Сімка - наступний бере 2 карти і пропускає хід
+        if card.rank == '7':
+            self.pending_draw += 2
+            self.skip_counter = 1
+            if player:
+                print(f"⚔️ {player.name} активував 7-ку: наступний +2 карти і пропуск.")
+
+        # 3. Вісімка - наступний бере 1 карту (але ходить)
+        elif card.rank == '8':
+            self.pending_draw += 1
+            if player:
+                print(f"⚔️ {player.name} активував 8-ку: наступний +1 карта.")
+
+        # 4. Дев'ятка чирва (або хреста, залежно від правил) - наприклад, +3 карти
+        # У вашому коді було згадування про спец. 9-ку. Припустимо це 9 Хреста.
+        elif card.rank == '9' and card.suit == 'clubs':
+            self.pending_draw += 3
+            self.skip_counter = 1
+            if player:
+                print(f"♣️ {player.name} активував 9 ХРЕСТА: наступний +3 карти і пропуск!")
+
+        # 5. Туз - пропуск ходу
+        elif card.rank == 'A':
+            self.skip_counter = 1
+            if player:
+                print(f"⛔ {player.name} поклав ТУЗА: наступний пропускає хід.")
+
+        # 6. Валет - ефект вибору масті тут не обробляється, 
+        # бо він вимагає взаємодії з UI (це робиться в execute_move).
 
     def execute_move(self, action, player, **kwargs):
         table = kwargs.get('table')
         engine = kwargs.get('engine')
         
-        # ==========================================================
-        # 1. ОБРОБКА ВІДПОВІДЕЙ З POPUP (Замість input)
-        # ==========================================================
-        
-        # Обробка вибору масті
-        if action == 'set_suit' or (isinstance(action, dict) and action.get('action') == 'set_suit'):
-            suit = action['suit'] if isinstance(action, dict) else kwargs.get('suit')
-            self.forced_suit = suit
-            self.waiting_for_suit = False
-            print(f"--> ЗАМОВЛЕНО: {self.forced_suit}")
-        
-            engine.notify("SUIT_ORDERED", suit=self.forced_suit)
-            return
+        # --- БЛОК 1: ОБРОБКА ВІДПОВІДЕЙ ВІД UI (Масть / Бонус) ---
+        if isinstance(action, dict):
+            # Гравець обрав масть (через UI або бот)
+            if action.get('action') == 'set_suit':
+                suit = action.get('suit')
+                self.forced_suit = suit
+                self.waiting_for_suit = False
+                print(f"--> ГРАВЕЦЬ {player.name} ЗАМОВИВ МАСТЬ: {self.forced_suit}")
+                engine.notify("SUIT_ORDERED", suit=self.forced_suit)
+                return
 
-        # Обробка вибору бонусу (множення або списання)
-        if action == 'set_bonus' or (isinstance(action, dict) and action.get('action') == 'set_bonus'):
-            choice = action['choice'] if isinstance(action, dict) else kwargs.get('choice')
-            
-            # Дістаємо збережені розрахунки
-            mult_val = self.temp_bonus_data.get('mult', 1)
-            sub_val = self.temp_bonus_data.get('sub', 0)
-            
-            if choice == 'multiply':
-                self.final_jack_multiplier = mult_val
-                print(f"☠️ БРІДЖ-МНОЖЕННЯ! Очки лузерів x{self.final_jack_multiplier}!")
-            else:
-                self.winner_score_bonus = -sub_val
-                print(f"📉 БРІДЖ-СПИСАННЯ! Переможець отримує {self.winner_score_bonus} очок.")
-            
-            self.waiting_for_bonus = False
-            self.round_ended_flag = True # Це завжди кінець гри/раунду
-            return
+            # Гравець обрав бонус (Брідж Валетів)
+            if action.get('action') == 'set_bonus':
+                choice = action.get('choice')
+                mult_val = self.temp_bonus_data.get('mult', 1)
+                sub_val = self.temp_bonus_data.get('sub', 0)
+                
+                if choice == 'multiply':
+                    self.final_jack_multiplier = mult_val
+                    print(f"☠️ БРІДЖ-МНОЖЕННЯ! Очки лузерів будуть помножені на x{self.final_jack_multiplier}!")
+                else:
+                    self.winner_score_bonus = -sub_val
+                    print(f"📉 БРІДЖ-СПИСАННЯ! Переможець списує собі {self.winner_score_bonus} очок.")
+                
+                self.waiting_for_bonus = False
+                self.round_ended_flag = True # Раунд завершується після вибору бонусу
+                return
 
-        # ==========================================================
-        # 2. СТАНДАРТНИЙ ХІД
-        # ==========================================================
-
+        # --- БЛОК 2: ВЗЯТТЯ КАРТИ (TAKE) ---
         if action == 'take':
+            # Використовуємо безпечне взяття (з перевертанням колоди якщо треба)
             self._safe_draw(engine, player, 1, table)
             self.has_taken_card = True
-            print(f"➕ {player.name} бере карту.")
+            print(f"➕ {player.name} бере карту з колоди.")
             return
 
+        # --- БЛОК 3: ПАС (PASS) ---
         if action == 'pass':
             print(f"⏩ {player.name} пасує.")
-            # ТУТ БУЛА ВИДАЧА КАРТИ - ЇЇ ТРЕБА ПРИБРАТИ
-            # Ми просто скидаємо прапорець 6-ки і виходимо.
-            self.must_cover_six = False
+            self.must_cover_six = False # Якщо спасував, вимога крити 6 знімається (хід переходить)
             return
         
-        # Кладемо карти на стіл
+        # --- БЛОК 4: ГРА КАРТОЮ (АБО КАРТАМИ) ---
         cards = action if isinstance(action, list) else [action]
+        
+        # Переміщуємо карти з руки на стіл
         for card in cards:
-            player.hand.remove(card)
+            if card in player.hand:
+                player.hand.remove(card)
             table.append(card)
         
         last_card = cards[-1]
-        count = len(cards)
-        print(f"🃏 {player.name} поклав: {cards}")
+        print(f"🃏 {player.name} поклав: {[str(c) for c in cards]}")
         
-        # Якщо була замовлена масть - скасовуємо її, бо хід зроблено
+        # Якщо була замовлена масть - вона "виконується" і скидається
         if self.forced_suit:
             self.forced_suit = None 
-            # СПОВІЩАЄМО UI, ЩО ЗАМОВЛЕННЯ ЗНЯТО
             engine.notify("SUIT_CLEARED")
 
-        # === ПРІОРИТЕТНА ПЕРЕВІРКА: БРІДЖ (4 карти) ===
+        # --- БЛОК 5: ПЕРЕВІРКА НА КОМБІНАЦІЮ "БРІДЖ" (4 карти) ---
         if len(table) >= 4:
             last_4 = table[-4:]
+            # Перевіряємо, чи всі 4 карти одного рангу
             if all(c.rank == last_4[0].rank for c in last_4):
-                print(f"\n🔥🔥🔥 ЗІБРАВСЯ БРІДЖ !!! (4 {last_4[0].rank})")
-                
-                # Автоматично оголошуємо Брідж (щоб не блокувати input-ом)
+                print(f"\n🔥🔥🔥 ЗІБРАВСЯ БРІДЖ !!! (4 карти рангу {last_4[0].rank})")
                 print(f"🏆 {player.name} ОГОЛОСИВ БРІДЖ!")
-                player.hand = [] # Очищаємо руку (перемога)
+                
+                # Гравець скидає всі карти (перемога)
+                player.hand = [] 
 
-                # --- ПЕРЕВІРКА НА ВАЛЕТІВ (Оригінальна логіка) ---
+                # Спеціальна логіка для Валетів
                 if last_4[0].rank == 'J':
-                    print(f"🃏 Це БРІДЖ ВАЛЕТАМИ! Спеціальні умови!")
+                    print(f"🃏 Це БРІДЖ ВАЛЕТАМИ! Вибір: помножити очки інших чи списати собі.")
                     
-                    # 1. Рахуємо варіанти
+                    # Розрахунок потенційного множника та суми списання
                     calc_multiplier = 0
                     jacks_value_sum = 0
                     for c in last_4:
                         jacks_value_sum += self.scores.get(c.rank, 20)
+                        # Валет пік дає x4 (або більше), інші x2 - приклад логіки
                         if c.suit == 'spades': calc_multiplier += 4
                         else: calc_multiplier += 2
                     
-                    # 2. Зберігаємо у temp
                     self.temp_bonus_data = {'mult': calc_multiplier, 'sub': jacks_value_sum}
-                    
-                    # 3. Якщо це бот -> вибирає сам
+
+                    # Якщо бот - вибирає автоматично (множення)
                     if hasattr(player, 'think'):
-                        # Бот завжди множить
                         self.execute_move({'action': 'set_bonus', 'choice': 'multiply'}, player, engine=engine)
                         return
                     
-                    # 4. Якщо людина -> показуємо POPUP і чекаємо
+                    # Якщо людина - показуємо меню вибору
                     self.waiting_for_bonus = True
-                    engine.notify("SHOW_BONUS_SELECTOR", 
-                                  player_id=player.player_id, 
-                                  mult=calc_multiplier, 
-                                  sub=jacks_value_sum)
-                    return # ЗУПИНЯЄМО ВИКОНАННЯ, ЧЕКАЄМО ВИБОРУ
-                    
+                    engine.notify("SHOW_BONUS_SELECTOR", player_id=player.player_id, mult=calc_multiplier, sub=jacks_value_sum)
+                    return 
+                
                 else:
-                    # Звичайний брідж (не валети)
+                    # Звичайний Брідж (не Валети) -> Стандартний бонус -50 очок
                     self.winner_score_bonus = -50
                     print("📉 Стандартний бонус Бріджу: -50 очок.")
                     self.round_ended_flag = True
                     return
-        # =================================================
 
-        # ЕФЕКТИ КАРТ (Якщо не оголошено Брідж)
-        if last_card.rank == '6':
-            self.must_cover_six = True
-            print("⚠️ ШІСТКА! Гравець ходить знову.")
-        else:
-            self.must_cover_six = False
+        # --- БЛОК 6: ЗАСТОСУВАННЯ ЕФЕКТІВ КАРТИ ---
+        self._apply_card_effects(last_card, player, engine)
+        
+        # --- БЛОК 7: ЛОГІКА ВАЛЕТА (ЗАМОВЛЕННЯ МАСТІ) ---
+        if last_card.rank == 'J':
+             # Якщо це була остання карта гравця -> він виграв, вибирати масть не треба
+             if len(player.hand) == 0:
+                print(f"🎉 {player.name} вийшов з гри Валетом!")
+                # Можна додати логіку вибору бонусу, як у Бріджі, але зазвичай просто кінець
+                self.round_ended_flag = True
+                return 
 
-        if last_card.rank == '7':
-            penalty = 2 * count
-            self.pending_draw += penalty
-            self.skip_counter = 1
-            print(f"⚔️ СІМКА! Наступний: +{penalty} карт і пропуск.")
-
-        elif last_card.rank == '8':
-            penalty = 1 * count
-            self.pending_draw += penalty
-            print(f"⚔️ ВІСІМКА! Наступний: +{penalty} карт (без пропуску).")
-
-        elif last_card.rank == '9':
-            club_nines = sum(1 for c in cards if c.suit == 'clubs')
-            if club_nines > 0:
-                penalty = 3 * club_nines
-                self.pending_draw += penalty
-                self.skip_counter = 1
-                print(f"♣️ 9 ХРЕСТ! Наступний: +{penalty} карт і пропуск.")
-            else:
-                print("🛡️ 9-ка чиста.")
-
-        elif last_card.rank == 'A':
-            num_players = len(engine.players)
-            max_skips = num_players - 1
-            skips = min(count, max_skips)
-            self.skip_counter = skips
-            print(f"⛔ ТУЗ! Пропуск ходу ({skips} гравців).")
-
-        elif last_card.rank == 'J':
-            # Логіка фінішу валетами (якщо це НЕ був брідж, але карти скінчились)
-            if len(player.hand) == 0:
-                print(f"\n🏆 {player.name} закінчує гру ВАЛЕТАМИ!")
-                
-                # 1. Рахуємо варіанти
-                calc_multiplier = 0
-                jacks_value_sum = 0
-                for c in cards:
-                    jacks_value_sum += self.scores.get(c.rank, 20)
-                    if c.suit == 'spades': calc_multiplier += 4
-                    else: calc_multiplier += 2
-                
-                # 2. Зберігаємо
-                self.temp_bonus_data = {'mult': calc_multiplier, 'sub': jacks_value_sum}
-
-                # 3. Бот чи Людина?
-                if hasattr(player, 'think'):
-                    self.execute_move({'action': 'set_bonus', 'choice': 'multiply'}, player, engine=engine)
-                    return
-                
-                # 4. Показуємо POPUP
-                self.waiting_for_bonus = True
-                engine.notify("SHOW_BONUS_SELECTOR", 
-                                player_id=player.player_id, 
-                                mult=calc_multiplier, 
-                                sub=jacks_value_sum)
-                return # ЧЕКАЄМО
-
-            else:
-                # Звичайний валет - вибір масті
-                print(f"\n🎩 ВАЛЕТ! {player.name}, обирає масть...")
+             else:
+                # Гра продовжується, треба замовити масть
+                print(f"\n🎩 ВАЛЕТ! {player.name} має обрати масть...")
                 
                 if hasattr(player, 'think'):
-                    # Бот вибирає масть
+                    # Бот вибирає масть, якої в нього найбільше
                     mapping = ['hearts', 'diamonds', 'clubs', 'spades']
+                    # Спрощена логіка: рандом
                     best_suit = random.choice(mapping) 
                     self.execute_move({'action': 'set_suit', 'suit': best_suit}, player, engine=engine)
                     return
-
-                # Людина - POPUP
-                self.waiting_for_suit = True
-                engine.notify("SHOW_SUIT_SELECTOR", player_id=player.player_id)
-                return # ЧЕКАЄМО
+                else:
+                    # Людина: ставимо прапорець і чекаємо
+                    self.waiting_for_suit = True
+                    engine.notify("SHOW_SUIT_SELECTOR", player_id=player.player_id)
+                    return 
 
         return True
 
     def should_switch_turn(self, action, player, **kwargs):
         engine = kwargs.get('engine')
         
-        # === ВАЖЛИВО: ЯКЩО ЧЕКАЄМО ВИБОРУ, ХІД НЕ ЗМІНЮЄТЬСЯ ===
+        # 1. Якщо чекаємо вибору від гравця - хід не передаємо
         if self.waiting_for_suit or self.waiting_for_bonus:
             return engine.active_player_idx
-        # ========================================================
 
+        # 2. Якщо раунд закінчено (оголошено брідж або хтось вийшов) - не перемикаємо
         if self.round_ended_flag:
             return engine.active_player_idx 
 
+        # 3. Якщо лежить ШІСТКА
         if self.must_cover_six:
-            if len(player.hand) == 0: return True 
+            # Якщо гравець вийшов (у нього 0 карт), він не може крити -> хід переходить
+            if len(player.hand) == 0: 
+                return (engine.active_player_idx + 1) % len(engine.players)
+            # Інакше він мусить ходити знову
             return engine.active_player_idx 
             
+        # 4. Якщо гравець взяв карту (take) - хід залишається у нього
         if action == 'take':
             return engine.active_player_idx 
 
-        # Якщо ми тільки що встановили масть - це кінець ходу валета, переходимо далі
-        if action == 'set_suit' or (isinstance(action, dict) and action.get('action') == 'set_suit'):
-             return self._calculate_next_player(engine, kwargs.get('table'))
+        # 5. Якщо set_suit (замовлення масті) - це частина ходу, треба розрахувати наступного
+        # (Продовжуємо виконання коду нижче)
 
-        return self._calculate_next_player(engine, kwargs.get('table'))
+        # 6. РОЗРАХУНОК НАСТУПНОГО ГРАВЦЯ
+        self.has_taken_card = False # Скидаємо прапорець "брав карту" для нового гравця
+        
+        current_idx = engine.active_player_idx
+        total_players = len(engine.players)
+        
+        # Визначаємо "жертву" (наступного по колу)
+        victim_idx = (current_idx + 1) % total_players
+        victim_player = engine.players[victim_idx]
+
+        # 7. ОБРОБКА ШТРАФІВ (7-ка, 8-ка, 9-ка)
+        if self.pending_draw > 0:
+            print(f"🎁 {victim_player.name} отримує штраф: {self.pending_draw} карт!")
+            # Видаємо карти жертві
+            self._safe_draw(engine, victim_player, self.pending_draw, kwargs.get('table'))
+            self.pending_draw = 0
+            
+        # 8. ОБРОБКА ПРОПУСКУ ХОДУ (Туз, 7-ка)
+        # step = 1 (звичайний перехід) + skip_counter (пропуски)
+        step = 1 + self.skip_counter
+        self.skip_counter = 0 # Скидаємо лічильник пропусків
+        
+        next_active_idx = (current_idx + step) % total_players
+        return next_active_idx
 
     def _calculate_next_player(self, engine, table):
         self.has_taken_card = False 
@@ -458,19 +467,39 @@ class BridgeRules(GameRules):
 
     def get_winner(self, **kwargs):
         players = kwargs.get('players')
+        engine = kwargs.get('engine')
         
-        if self.round_ended_flag:
-            self._calculate_scores(players)
-            return "ROUND_OVER" 
-            
-        for p in players:
-            if len(p.hand) == 0:
-                print(f"🎉 {p.name} закінчив карти!")
-                self._calculate_scores(players)
-                return "ROUND_OVER"
-        
-        return None
+        winner_found = False
+        winner_idx = None # Індекс переможця
 
+        # Перевірка умови закінчення
+        if self.round_ended_flag:
+            winner_found = True
+            if engine:
+                winner_idx = engine.active_player_idx
+        else:
+            for idx, p in enumerate(players):
+                if len(p.hand) == 0:
+                    winner_found = True
+                    winner_idx = idx
+                    break
+        
+        if winner_found:
+            self._calculate_scores(players)
+            
+            # === ОСЬ ТУТ КЛЮЧОВИЙ МОМЕНТ ===
+            if engine and winner_idx is not None:
+                # Зберігаємо індекс переможця у engine.dealer_idx
+                # Щоб при наступному виклику custom_deal він став дилером
+                engine.dealer_idx = winner_idx
+                
+                winner_name = players[winner_idx].name
+                print(f"🏁 ПЕРЕМІГ {winner_name}. Він стає ДИЛЕРОМ на наступну гру!")
+                
+            return "ROUND_OVER"
+            
+        return None
+    
     def _calculate_scores(self, players):
         final_mult = self.score_multiplier * self.final_jack_multiplier
         
@@ -506,3 +535,68 @@ class BridgeRules(GameRules):
                 p.score = 0
             elif p.score > 225:
                 print(f"💀 {p.name} має > 225 і вилітає!")
+
+    def custom_deal(self, engine):
+        # 1. Визначаємо Дилера
+        if engine.dealer_idx is None:
+            # Перша гра - рандом
+            engine.dealer_idx = random.randint(0, len(engine.players) - 1)
+            print(f"🎲 [NEW GAME] Випадковий дилер: {engine.players[engine.dealer_idx].name}")
+        else:
+            # Наступні ігри - переможець (індекс вже встановлено в get_winner)
+            # Перевіряємо валідність індексу (раптом гравців стало менше)
+            if engine.dealer_idx >= len(engine.players):
+                engine.dealer_idx = 0
+            print(f"👑 [NEXT ROUND] Дилер (Переможець): {engine.players[engine.dealer_idx].name}")
+
+        dealer_idx = engine.dealer_idx
+        dealer = engine.players[dealer_idx]
+
+        # 2. Роздача карт: Всім 5, Дилеру 4
+        # Цикл поки є карти і комусь треба
+        cards_needed = True
+        while cards_needed:
+            cards_needed = False
+            for i, player in enumerate(engine.players):
+                # Цільова кількість карт
+                target = 4 if i == dealer_idx else 5
+                
+                if len(player.hand) < target and engine.deck.cards:
+                    player.receive_card(engine.deck.deal())
+                    cards_needed = True
+
+        # 3. 5-та карта Дилера летить на стіл
+        if engine.deck.cards:
+            start_card = engine.deck.deal()
+            engine.table.append(start_card)
+            print(f"🃏 Дилер {dealer.name} відкриває стіл картою: {start_card}")
+
+            # ВАЖЛИВО: Щоб логіка думала, що це походив Дилер,
+            # ми тимчасово ставимо active_player_idx на нього.
+            engine.active_player_idx = dealer_idx
+
+            # 4. Візуалізація
+            # Показуємо карти в руках
+            engine.notify("DEAL_CARDS")
+            # Показуємо анімацію, що дилер кинув карту
+            engine.notify("PLAYER_MOVE", player=dealer, action=[start_card])
+
+            # 5. Застосовуємо ефекти (7, 8, Туз, 6)
+            self._apply_card_effects(start_card, player=dealer)
+
+            # 6. Розраховуємо, хто ходить наступним (відносно Дилера)
+            context = {"table": engine.table, "engine": engine}
+            
+            # Викликаємо should_switch_turn, ніби дилер щойно поклав [start_card]
+            next_idx = self.should_switch_turn([start_card], dealer, **context)
+            
+            # Встановлюємо реального гравця, який має ходити/бити/брати
+            if isinstance(next_idx, int):
+                engine.active_player_idx = next_idx
+            
+            print(f"👉 Хід переходить до: {engine.players[engine.active_player_idx].name}")
+            engine.notify("TURN_SWITCH", active_player_idx=engine.active_player_idx)
+
+        else:
+            # На випадок збою (пуста колода)
+            engine.notify("DEAL_CARDS")

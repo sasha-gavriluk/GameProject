@@ -51,6 +51,8 @@ class GameEngine:
         self.active_player_idx = 0
         self.game_over = False
         self.extra_data = {} 
+
+        self.dealer_idx = None
         
         # --- НОВЕ: Система подій (Observer) ---
         # Сюди ми підключимо обробник з PlayGameScreen
@@ -77,25 +79,24 @@ class GameEngine:
         self.rules.on_game_start(engine=self)
 
     def start_game(self):
-        """Явний запуск гри і сповіщення UI"""
-        # Сповіщаємо, що гра почалась (наприклад, щоб показати козиря)
+        """Запуск гри"""
         self.notify("GAME_START", trump=self.extra_data.get('trump'))
         
-        # Виконуємо початкову роздачу
-        count = self.rules.initial_cards_count
-        # Роздаємо по колу (як у реальності), щоб це виглядало гарно
-        # Або просто роздаємо всім по черзі
-        for _ in range(count):
-            for player in self.players:
-                if self.deck and len(self.deck.cards) > 0:
-                    card = self.deck.deal()
-                    player.receive_card(card)
-        
-        if hasattr(self.rules, "set_starting_player"):
-            self.rules.set_starting_player(engine=self)
-        
-        # Сповіщаємо візуал, що треба намалювати карти в руках
-        self.notify("DEAL_CARDS")
+        # Виклик кастомної роздачі (для Бріджу)
+        if hasattr(self.rules, "custom_deal"):
+            self.rules.custom_deal(self)
+        else:
+            # Стандартна роздача (Дурак, Війна)
+            count = self.rules.initial_cards_count
+            for _ in range(count):
+                for player in self.players:
+                    if self.deck and len(self.deck.cards) > 0:
+                        card = self.deck.deal()
+                        player.receive_card(card)
+            
+            if hasattr(self.rules, "set_starting_player"):
+                self.rules.set_starting_player(engine=self)
+            self.notify("DEAL_CARDS")
 
     def draw_cards(self, player, count):
         """Взяття карт з колоди з оповіщенням"""

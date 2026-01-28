@@ -1,6 +1,7 @@
 # gui/utils/GameAdapter.py
 
-import time # <--- Додаємо імпорт часу
+import time
+from collections import deque
 
 from utils.engine import GameEngine, Player
 from utils.cards import Deck
@@ -19,9 +20,13 @@ class GameAdapter:
         self.game_type = game_type
         self.engine = None
         self.hero_id = "hero"
-        self.command_queue = [] 
         
-        # === Таймер для затримки бота ===
+        # Черга команд та візуальний рушій
+        self.command_queue = deque() 
+        self.visual_engine = None 
+        self.is_visual_busy = False
+        
+        # Таймер для затримки бота
         self.bot_next_move_time = 0 
         self.waiting_for_deal = False
         self.waiting_for_throw_confirm = False
@@ -33,9 +38,16 @@ class GameAdapter:
         self.pending_rules_settings = None
         self.pending_game_type = game_type
         self._pending_durak_is_defense = None
+        self.current_deck_size = 52
+
+    def set_visual_engine(self, ve):
+        """Зв'язуємо адаптер з візуальним рушієм"""
+        self.visual_engine = ve
 
     def start(self):
-        self.command_queue = []
+        # Очищаємо чергу при старті
+        self.command_queue.clear()
+        self.is_visual_busy = False
 
         self.pending_game_type = self.game_type
         self.pending_rules_settings = {
@@ -45,42 +57,48 @@ class GameAdapter:
             "first_bout_5": False
         }
         self.pending_max_players = self._get_max_players(self.game_type)
+        self.current_deck_size = 52
+        
+        # Додаємо команду в чергу
         self.command_queue.append({
             "cmd": "SHOW_PLAYER_COUNT",
             "max_players": self.pending_max_players,
             "default_players": 2,
             "game_type": self.game_type,
-            "rules_settings": self.pending_rules_settings
+            "rules_settings": self.pending_rules_settings,
+            "deck_size": self.current_deck_size
         })
         self.waiting_for_player_count = True
         
-        return self._flush_commands()
+        self._process_queue()
+        return []
 
     def process_input(self, data):
-        self.command_queue = [] 
-
         if data['type'] == 'system':
             if data.get('action') == 'deal_complete':
                 self.waiting_for_deal = False
                 self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
-            return self._flush_commands()
+            return []
         
         if data['type'] == 'ui_action':
             action = data['action']
 
             if action == 'start_new_round':
                 self.start_next_round()
-                return self.command_queue
+                return [] 
             elif action == 'set_player_count':
                 count = data.get('count', 2)
                 settings = data.get('rules_settings')
-                self._start_game_with_players(count, settings)
-                return self._flush_commands()
+                deck_size = data.get('deck_size', self.current_deck_size)
+                self._start_game_with_players(count, settings, deck_size)
+                return []
             elif action == 'throw_more':
                 self.waiting_for_throw_confirm = False
                 self.pending_bot_action = None
                 self.pending_bot_active_idx = None
-                return self._flush_commands()
+                self._check_ui_controls()
+                self._process_queue()
+                return []
             elif action == 'throw_done':
                 if self.pending_bot_action is not None and self.pending_bot_active_idx is not None:
                     self.engine.active_player_idx = self.pending_bot_active_idx
@@ -93,17 +111,22 @@ class GameAdapter:
                 self.pending_bot_action = None
                 self.pending_bot_active_idx = None
                 self._check_ui_controls()
-                return self._flush_commands()
+                self._process_queue()
+                return []
                 
             elif action == 'get_scores':
-                scores = [{'name': p.name, 'score': p.score} for p in self.engine.players]
-                self.command_queue.append({
-                    "cmd": "SHOW_SCORES",
-                    "is_round_end": False,
-                    "scores": scores
-                })
-                return self.command_queue
+                if self.engine:
+                    scores = [{'name': p.name, 'score': p.score} for p in self.engine.players]
+                    self.command_queue.append({
+                        "cmd": "SHOW_SCORES",
+                        "is_round_end": False,
+                        "scores": scores
+                    })
+                    self._process_queue()
+                return []
             
+            if not self.engine: return []
+
             # Popup дії
             if action == 'set_suit':
                 self.engine.play_turn({'action': 'set_suit', 'suit': data['suit']})
@@ -126,23 +149,25 @@ class GameAdapter:
                     if not success:
                         self._pending_durak_is_defense = None
                         self.command_queue.append({"cmd": "SHOW_ERROR", "text": "Невірний хід!"})
+                        self._process_queue()
             
             else:
-                # take / pass
                 self.engine.play_turn(action)
         
-        # --- ОНОВЛЕНА ЛОГІКА БОТІВ ---
+        # --- ЛОГІКА БОТІВ ---
         if self.waiting_for_player_count:
-            return self._flush_commands()
+            return []
         if self.waiting_for_deal:
             self._check_ui_controls()
-            return self._flush_commands()
+            return []
+
+        if not self.engine:
+             return []
 
         current_idx = self.engine.active_player_idx
         current_player = self.engine.players[current_idx]
         
         if isinstance(current_player, BotPlayer) and not self.engine.game_over:
-             # Перевіряємо, чи настав час для ходу
              if time.time() > self.bot_next_move_time:
                  action = current_player.think(self.engine)
                  if action:
@@ -152,22 +177,21 @@ class GameAdapter:
                          self.engine.active_player_idx = 0
                          self.waiting_for_throw_confirm = True
                          self.command_queue.append({"cmd": "ASK_THROW"})
+                         self._process_queue()
                      else:
                          self._pending_durak_is_defense = self._predict_durak_defense(action, current_player)
                          self.engine.play_turn(action)
-                         # Встановлюємо таймер на наступний хід (або наступну дію в серії)
                          self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
         else:
-             # Якщо зараз хід гравця (або анімація), ми "відсуваємо" таймер бота.
-             # Це гарантує, що як тільки хід перейде до бота, він почекає BOT_DELAY
-             # перед першою дією.
              self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
 
         self._check_ui_controls()
-        return self._flush_commands()
+        self._process_queue()
+        return []
     
     def _check_ui_controls(self):
-        # (Код без змін)
+        if not self.engine: return
+
         rules = self.engine.rules
         hero_idx = 0
         
@@ -180,9 +204,7 @@ class GameAdapter:
 
         if isinstance(rules, DurakRules):
             hero_idx = 0
-            current_active = self.engine.active_player_idx
             is_defender = (hero_idx == rules.defender_idx)
-            is_attacker = not is_defender
             
             show_btn = False
             btn_text = ""
@@ -224,7 +246,6 @@ class GameAdapter:
             return
 
     def _on_engine_event(self, event_type, data):
-        # (Код без змін)
         if event_type == "DEAL_CARDS":
             deals = []
             for p in self.engine.players:
@@ -240,21 +261,28 @@ class GameAdapter:
             
             starting_trump = self.engine.extra_data.get('starting_trump')
 
+            # === ВИПРАВЛЕНО ТУТ: self.engine.deck.cards ===
+            deck_count = len(self.engine.deck.cards) if self.engine.deck else 0
+            
             self.command_queue.append({
                 "cmd": "INITIAL_DEAL", 
                 "hands": deals,
-                "deck_count": len(self.engine.deck),
+                "deck_count": deck_count, 
                 "trump_card": trump_data,
                 "starting_trump": starting_trump
             })
 
-        if event_type == "PLAYER_DRAW_DECK":
+        elif event_type == "CHOOSING_DEALER":
+            self.command_queue.append({
+                "cmd": "CHOOSING_DEALER",
+                "dealer_idx": data.get("dealer_idx"),
+                "is_random": data.get("is_random", False)
+            })
+
+        elif event_type == "PLAYER_DRAW_DECK":
             p = data['player']
             cards = data['cards']
-            cards_data = []
-            for c in cards:
-                cards_data.append({"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"})
-            
+            cards_data = [{"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"} for c in cards]
             self.command_queue.append({
                 "cmd": "DRAW_CARDS_ANIMATION",
                 "player_id": p.player_id,
@@ -273,14 +301,16 @@ class GameAdapter:
             action = data['action'] 
             is_durak = isinstance(self.engine.rules, DurakRules)
             durak_is_defense = False
+            
             if is_durak and not isinstance(action, str):
                 if self._pending_durak_is_defense is not None:
                     durak_is_defense = self._pending_durak_is_defense
                 else:
                     rules = self.engine.rules
-                    player_idx = self.engine.players.index(p)
-                    if player_idx == rules.defender_idx and not rules.is_transfer_move:
-                        durak_is_defense = True
+                    if hasattr(rules, 'defender_idx'):
+                        player_idx = self.engine.players.index(p)
+                        if player_idx == rules.defender_idx and not rules.is_transfer_move:
+                            durak_is_defense = True
                 self._pending_durak_is_defense = None
             
             if isinstance(action, (list, tuple)):
@@ -310,7 +340,7 @@ class GameAdapter:
             self.command_queue.append({"cmd": "CLEAR_TABLE"})
             
         elif event_type == "GAME_OVER":
-            if isinstance(self.engine.rules, BridgeRules):
+            if hasattr(self.engine.rules, 'scores') or isinstance(self.engine.rules, BridgeRules):
                 scores = [{'name': p.name, 'score': p.score} for p in self.engine.players]
                 self.command_queue.append({
                     "cmd": "SHOW_SCORES",
@@ -332,10 +362,7 @@ class GameAdapter:
             })
 
         elif event_type == "RESHUFFLE_TABLE":
-            # Приходить top_card (об'єкт) і new_count (int)
             top = data['top_card']
-            
-            # Формуємо команду для VisualEngine
             self.command_queue.append({
                 "cmd": "ANIMATE_RESHUFFLE",
                 "top_card": {
@@ -367,6 +394,23 @@ class GameAdapter:
                 })
             
         self._check_ui_controls()
+        self._process_queue()
+
+    def _process_queue(self):
+        if self.is_visual_busy or not self.command_queue:
+            return
+
+        if not self.visual_engine:
+            return
+
+        instruction = self.command_queue.popleft() 
+        self.is_visual_busy = True
+        
+        self.visual_engine.execute_instruction(instruction, on_complete=self._on_visual_complete)
+
+    def _on_visual_complete(self):
+        self.is_visual_busy = False
+        self._process_queue()
 
     def _get_hands_snapshot(self):
         res = []
@@ -374,14 +418,8 @@ class GameAdapter:
             cards = [{"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"} for c in p.hand]
             res.append({"player_id": p.player_id, "cards_data": cards})
         return res
-
-    def _flush_commands(self):
-        res = list(self.command_queue)
-        self.command_queue = []
-        return res
     
     def _reset_bot_timer(self):
-        """Скидає таймер: бот чекатиме BOT_DELAY секунд"""
         self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
     
     def _announce_turn(self):
@@ -396,18 +434,12 @@ class GameAdapter:
         })
 
     def start_next_round(self):
-        print("--- ЗАПУСК НОВОГО РАУНДУ ---")
-        
-        # 1. Скидаємо прапорець кінця гри
         self.engine.game_over = False
-        
-        # 2. Створюємо нову колоду
-        new_deck = Deck()
+        new_deck = Deck(size=self.current_deck_size)
+        if isinstance(self.engine.rules, WarRules):
+            self.engine.rules.initial_cards_count = self.current_deck_size // len(self.engine.players)
         self.engine.setup_game(new_deck)
         
-        # 3. !!! ВАЖЛИВО !!! 
-        # Спочатку відправляємо команду на налаштування столу (вона очистить старе).
-        # Це має бути ПЕРЕД start_game(), щоб не стерти нову роздачу.
         self.command_queue.append({
             "cmd": "SETUP_TABLE",
             "game_type": self.game_type,
@@ -418,22 +450,16 @@ class GameAdapter:
             ]
         })
         
-        # 4. Тепер запускаємо гру.
-        # Всередині спрацює подія DEAL_CARDS, яка додасть правильний INITIAL_DEAL у чергу.
-        # Оскільки SETUP_TABLE вже в черзі першим, анімація колоди спрацює поверх чистого столу.
         self.engine.start_game()
-        
-        # 5. Скидаємо таймер бота
         self._reset_bot_timer()
         self.waiting_for_deal = True
         self._announce_turn()
-
-        # Примітка: Ми більше НЕ додаємо порожній "INITIAL_DEAL" вручну, 
-        # бо його додасть обробник подій _on_engine_event автоматично.
-
         self._check_ui_controls()
+        self._process_queue()
 
     def _get_max_players(self, game_type):
+        if game_type == "WAR":
+            return 2
         if game_type == "BRIDGE":
             deck_size = 36
             initial_cards = 6
@@ -442,11 +468,14 @@ class GameAdapter:
             initial_cards = 6
         return max(2, deck_size // initial_cards)
 
-    def _start_game_with_players(self, count, rules_settings=None):
+    def _start_game_with_players(self, count, rules_settings=None, deck_size=52):
         max_players = self.pending_max_players or 2
         count = max(2, min(int(count), max_players))
+        if self.pending_game_type == "WAR":
+            count = 2
         self.waiting_for_player_count = False
         self.engine = None
+        self.current_deck_size = deck_size
 
         is_multi_select = True
         if self.pending_game_type == "WAR":
@@ -468,7 +497,9 @@ class GameAdapter:
             bot = BotPlayer(f"Bot {idx}", player_id=f"bot_{idx}")
             self.engine.add_player(bot)
 
-        deck = Deck()
+        deck = Deck(size=self.current_deck_size)
+        if isinstance(rules, WarRules):
+            rules.initial_cards_count = self.current_deck_size // count
         self.engine.setup_game(deck)
 
         setup_cmd = {
@@ -486,47 +517,37 @@ class GameAdapter:
         self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
         self.waiting_for_deal = True
         self._announce_turn()
+        
+        self._process_queue()
 
     def _should_ask_for_throw(self, action):
-        if not isinstance(self.engine.rules, DurakRules):
-            return False
-        if action not in ("pass", "take"):
-            return False
+        if not isinstance(self.engine.rules, DurakRules): return False
+        if action not in ("pass", "take"): return False
         rules = self.engine.rules
         hero = self.engine.players[0]
-        if self.engine.active_player_idx == 0:
-            return False
-        if rules.defender_idx == 0:
-            return False
-        if not self.engine.table:
-            return False
+        if self.engine.active_player_idx == 0: return False
+        if rules.defender_idx == 0: return False
+        if not self.engine.table: return False
         ranks_on_table = {c.rank for c in self.engine.table}
         for c in hero.hand:
-            if c.rank in ranks_on_table:
-                return True
+            if c.rank in ranks_on_table: return True
         return False
 
     def _predict_durak_defense(self, action, player):
-        if not isinstance(self.engine.rules, DurakRules):
-            return False
-        if isinstance(action, str):
-            return False
+        if not isinstance(self.engine.rules, DurakRules): return False
+        if isinstance(action, str): return False
         rules = self.engine.rules
         try:
             player_idx = self.engine.players.index(player)
-        except ValueError:
-            return False
-        if player_idx != rules.defender_idx:
-            return False
+        except ValueError: return False
+        if player_idx != rules.defender_idx: return False
         cards_played = action if isinstance(action, (list, tuple)) else [action]
-        if not cards_played:
-            return False
+        if not cards_played: return False
         can_transfer = rules.settings.get("mode") in ("perevodnoy", "mixed") and rules.transfer_allowed
         if rules.pending_attacks and can_transfer and len(cards_played) == len(rules.pending_attacks):
             match = all(
                 cards_played[i].rank == rules.pending_attacks[i].rank
                 for i in range(len(cards_played))
             )
-            if match:
-                return False
+            if match: return False
         return True

@@ -23,9 +23,12 @@ class Card:
         return symbols.get(self.suit, self.suit)
     
 class Deck:
-    def __init__(self, **kwargs):
+    def __init__(self, size=52, **kwargs):
         self.suits = ['hearts', 'diamonds', 'clubs', 'spades']
-        self.ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+        if size == 36:
+            self.ranks = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+        else:
+            self.ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
         self.cards = [Card(s, r) for s in self.suits for r in self.ranks]
 
     def shuffle(self):
