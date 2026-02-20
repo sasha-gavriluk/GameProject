@@ -1,0 +1,6 @@
+aioconsole==0.8.2
+Kivy==2.3.1
+pyjnius==1.7.0
+python_bcrypt==0.3.2
+PyYAML==6.0.3
+websockets==16.0

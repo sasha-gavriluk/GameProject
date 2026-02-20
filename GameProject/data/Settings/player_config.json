@@ -1,0 +1,9 @@
+{
+    "login": "1",
+    "password_blob": "MQ==",
+    "auto_login": false,
+    "volume": 100,
+    "server_ip": "carts.to",
+    "orientation": "portrait",
+    "server_port": 8765
+}
