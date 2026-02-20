@@ -5,6 +5,8 @@ from gui.utils.GameAdapter import GameAdapter
 from gui.utils.GameSettings import game_settings
 
 class PlayGameScreen(BaseScreen):
+    use_screen_background = False
+
     def __init__(self, ui_manager, controller, **kwargs):
         super().__init__(ui_manager, controller, **kwargs)
         self.game_type = "DURAK"
@@ -19,7 +21,7 @@ class PlayGameScreen(BaseScreen):
         # 1. Створюємо Візуальний Двигун
         self.visual_engine = VisualEngine()
         self.visual_engine.set_callback(self.on_ui_action)
-        self.visual_engine.add_common_ui(self.go_back)
+        self.visual_engine.go_back_callback = self.go_back
         self.add_widget(self.visual_engine)
 
         # 2. Створюємо Адаптер

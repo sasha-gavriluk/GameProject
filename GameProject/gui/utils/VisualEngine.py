@@ -280,9 +280,6 @@ class LayoutManager:
         # 2. UI Elements
         if self.engine.btn_action:
             self.engine.btn_action.size = (VisualConfig.sdp(120), VisualConfig.sdp(50))
-        for child in self.engine.children:
-            if isinstance(child, GameButton) and child.text in ["< Назад", "Рахунок"]:
-                child.size = (VisualConfig.sdp(100), VisualConfig.sdp(50))
                 
         if self.engine.suit_indicator:
             self.engine.suit_indicator.size = (VisualConfig.sdp(100), VisualConfig.sdp(100))
@@ -312,13 +309,35 @@ class LayoutManager:
 
         if bots:
             self._layout_bots(bots, w, h)
+        
+        # Верхні кнопки ставимо нижче ряду ботів, щоб не перекривалися.
+        self._layout_top_controls(bots, w, h)
 
         # 5. Table Cards
         if self.engine.cards_on_table:
             for card in self.engine.cards_on_table:
                 card.size = (VisualConfig.CARD_W, VisualConfig.CARD_H)
             if getattr(self.engine, 'game_type', None) == "DURAK":
-                self.layout_durak_table()
+                self.layout_durak_table(animate=False)
+
+    def _layout_top_controls(self, bots, w, h):
+        btn_w = VisualConfig.sdp(100)
+        btn_h = VisualConfig.sdp(50)
+        margin = VisualConfig.sdp(10)
+
+        controls_y = h - btn_h - margin
+        if bots:
+            bots_bottom = min(bot.y for bot in bots)
+            controls_y = bots_bottom - btn_h - VisualConfig.sdp(8)
+            controls_y = max(VisualConfig.sdp(12), controls_y)
+
+        if self.engine.btn_back:
+            self.engine.btn_back.size = (btn_w, btn_h)
+            self.engine.btn_back.pos = (w * 0.02, controls_y)
+
+        if self.engine.btn_score:
+            self.engine.btn_score.size = (btn_w, btn_h)
+            self.engine.btn_score.pos = (w - btn_w - (w * 0.02), controls_y)
 
     def _layout_bots(self, bots, w, h):
         """Розміщує ботів у рівний горизонтальний ряд зверху екрану."""
@@ -357,7 +376,8 @@ class LayoutManager:
         start_x = (w - total_width) / 2 + (actual_w / 2)
         
         # Верхня межа екрану (для всіх однакова)
-        max_top = h - VisualConfig.sdp(VisualConfig.BOT_TOP_OFFSET)
+        # Лишаємо місце зверху під ім'я, яке відмальовується над рукою.
+        max_top = h - VisualConfig.sdp(VisualConfig.BOT_TOP_OFFSET) - VisualConfig.sdp(24)
 
         # Розставляємо ботів по лінії
         for i, bot in enumerate(bots):
@@ -368,46 +388,76 @@ class LayoutManager:
             
             bot.update_hand_layout()
 
-    def calc_durak_attack_positions(self, count):
-        if not self.engine.battle_widget or count <= 0: return []
+    def calc_durak_pair_centers(self, count):
+        if not self.engine.battle_widget or count <= 0:
+            return []
+
         card_w = VisualConfig.CARD_W
+        # Захист перекриває 70% карти атаки => зсув 30% ширини.
+        defense_shift_x = card_w * 0.30
+        pair_slot_w = card_w + defense_shift_x
+
         desired_gap = VisualConfig.sdp(18)
         available = self.engine.battle_widget.width
         gap = desired_gap
-        
-        if count > 1:
-            total = count * card_w + (count - 1) * desired_gap
-            if total > available:
-                gap = max(-card_w * 0.35, (available - count * card_w) / (count - 1))
-                
-        total = count * card_w + (count - 1) * gap
-        start_x = self.engine.battle_widget.center_x - total / 2 + card_w / 2
-        return [(start_x + i * (card_w + gap), self.engine.battle_widget.center_y) for i in range(count)]
 
-    def layout_durak_table(self, animate_card=None, animate_pos=None, animate_existing=False):
-        positions = self.calc_durak_attack_positions(len(self.engine.durak_pairs))
-        if not positions: return
-        offset_x, offset_y = VisualConfig.CARD_W * 0.3, VisualConfig.CARD_H * 0.2
-        
+        if count > 1:
+            desired_total = count * pair_slot_w + (count - 1) * desired_gap
+            if desired_total > available:
+                # Стискаємо ряд, але не даємо картам повністю "наїхати" одна на одну.
+                gap = max(-pair_slot_w * 0.25, (available - count * pair_slot_w) / (count - 1))
+
+        total_w = count * pair_slot_w + (count - 1) * gap
+        start_cx = self.engine.battle_widget.center_x - total_w / 2 + pair_slot_w / 2
+        return [(start_cx + i * (pair_slot_w + gap), self.engine.battle_widget.center_y) for i in range(count)]
+
+    def layout_durak_table(self, animate=True, focus_card=None, on_focus_complete=None):
+        centers = self.calc_durak_pair_centers(len(self.engine.durak_pairs))
+        if not centers:
+            if on_focus_complete:
+                on_focus_complete()
+            return
+
+        attack_defense_shift_x = VisualConfig.CARD_W * 0.30
+        defense_shift_y = VisualConfig.CARD_H * 0.22
+        anim_duration = max(0.12, VisualConfig.PLAY_SPEED)
+
+        focus_bound = False
         for i, pair in enumerate(self.engine.durak_pairs):
-            for key, is_def in [("attack", False), ("defense", True)]:
+            pair_cx, pair_cy = centers[i]
+            target_map = {
+                "attack": (pair_cx - (attack_defense_shift_x / 2), pair_cy),
+                "defense": (pair_cx + (attack_defense_shift_x / 2), pair_cy + defense_shift_y),
+            }
+
+            for key in ("attack", "defense"):
                 card = pair.get(key)
-                if not card: continue
+                if not card:
+                    continue
+
+                tx, ty = target_map[key]
                 card.size = (VisualConfig.CARD_W, VisualConfig.CARD_H)
                 card.angle = 0
-                tx, ty = (positions[i][0] + offset_x, positions[i][1] + offset_y) if is_def else positions[i]
-                
-                if card is not animate_card:
-                    if animate_existing:
-                        # Імпортуємо Animation тут або беремо з файлу
-                        from kivy.animation import Animation
-                        Animation(center_x=tx, center_y=ty, angle=0, size=card.size, duration=VisualConfig.PLAY_SPEED, t='out_quad').start(card)
-                    else:
-                        card.center_x, card.center_y = tx, ty
 
-        if animate_card and animate_pos:
-            from kivy.animation import Animation
-            Animation(center_x=animate_pos[0], center_y=animate_pos[1], angle=0, size=animate_card.size, duration=VisualConfig.PLAY_SPEED, t='out_quad').start(animate_card)
+                if animate:
+                    Animation.stop_all(card)
+                    anim = Animation(
+                        center_x=tx,
+                        center_y=ty,
+                        angle=0,
+                        size=(VisualConfig.CARD_W, VisualConfig.CARD_H),
+                        duration=anim_duration,
+                        t='out_quad'
+                    )
+                    if card is focus_card and on_focus_complete and not focus_bound:
+                        anim.bind(on_complete=lambda *_: on_focus_complete())
+                        focus_bound = True
+                    anim.start(card)
+                else:
+                    card.center_x, card.center_y = tx, ty
+
+        if on_focus_complete and (focus_card is None or not focus_bound):
+            on_focus_complete()
 
 # ==========================================
 # 3. ГОЛОВНИЙ ДВИГУН (VISUAL ENGINE)
@@ -431,6 +481,8 @@ class VisualEngine(FloatLayout):
         self.durak_pairs = []
         
         self.btn_action = None 
+        self.btn_back = None
+        self.btn_score = None
         self.event_callback = None
         self.go_back_callback = None 
         self.is_deck_animating = False
@@ -453,9 +505,9 @@ class VisualEngine(FloatLayout):
         self.go_back_callback = go_back_callback
         
         # Кнопка Назад
-        btn_back = GameButton(text="< Назад", size_hint=(None, None), size=(VisualConfig.sdp(100), VisualConfig.sdp(50)), pos_hint={'x': 0.02, 'top': 0.98})
-        btn_back.bind(on_release=lambda x: self.go_back_callback())
-        self.add_widget(btn_back)
+        self.btn_back = GameButton(text="< Назад", size_hint=(None, None), size=(VisualConfig.sdp(100), VisualConfig.sdp(50)))
+        self.btn_back.bind(on_release=lambda x: self.go_back_callback())
+        self.add_widget(self.btn_back)
 
         # Кнопка Дії
         self.btn_action = GameButton(text="Взяти", size_hint=(None, None), size=(VisualConfig.sdp(120), VisualConfig.sdp(50)), pos_hint={'right': 0.95, 'y': 0.25})
@@ -485,6 +537,9 @@ class VisualEngine(FloatLayout):
         elif cmd == "DRAW_CARDS_ANIMATION": 
             duration = self._draw_cards_animation(instruction)
             Clock.schedule_once(done, duration)
+        elif cmd == "CLEAR_TABLE":
+            duration = self._clear_table(instruction)
+            Clock.schedule_once(done, duration)
         elif cmd == "ANIMATE_RESHUFFLE":
             self._animate_reshuffle_table(instruction, callback=done)
         elif cmd == "CHOOSING_DEALER":
@@ -494,7 +549,6 @@ class VisualEngine(FloatLayout):
         else:
             if cmd == "SETUP_TABLE": self._setup_table(instruction)
             elif cmd == "SYNC_HANDS": self._sync_hands(instruction)
-            elif cmd == "CLEAR_TABLE": self._clear_table(instruction)
             elif cmd == "UPDATE_CONTROLS": self._update_controls(instruction)
             elif cmd == "UPDATE_TURN": self._update_turn_label(instruction)
             elif cmd == "SHOW_ORDERED_SUIT": self._show_ordered_suit(instruction)
@@ -518,11 +572,13 @@ class VisualEngine(FloatLayout):
         self.clear_widgets()
         self.input_locked = True
         self.game_type = data.get("game_type")
+        self.btn_back = None
+        self.btn_score = None
 
         if self.game_type == "BRIDGE":
-            btn = GameButton(text="Рахунок", size_hint=(None, None), size=(VisualConfig.sdp(100), VisualConfig.sdp(50)), pos_hint={'right': 0.98, 'top': 0.98}, background_color=(0.5, 0.5, 0.5, 1))
-            btn.bind(on_release=lambda x: self.dialogs.show_score_popup(is_round_end=False))
-            self.add_widget(btn)
+            self.btn_score = GameButton(text="Рахунок", size_hint=(None, None), size=(VisualConfig.sdp(100), VisualConfig.sdp(50)), background_color=(0.5, 0.5, 0.5, 1))
+            self.btn_score.bind(on_release=lambda x: self.dialogs.show_score_popup(is_round_end=False))
+            self.add_widget(self.btn_score)
 
         self.players_map, self.player_widgets_list, self.cards_on_table, self.durak_pairs = {}, [], [], []
         self.trump_widget, self.trump_suit = None, None
@@ -530,9 +586,6 @@ class VisualEngine(FloatLayout):
 
         self.suit_indicator = Label(text="?", font_size=VisualConfig.ssp(80), font_name='DejaVuSans', color=(1,1,1,1), outline_width=2, outline_color=(0,0,0,1), size_hint=(None, None), size=(VisualConfig.sdp(100), VisualConfig.sdp(100)), pos_hint={'right': 0.97, 'center_y': 0.5}, opacity=0)
         self.add_widget(self.suit_indicator)
-        
-        self.turn_label = Label(text="", font_size=VisualConfig.ssp(18), color=(1,1,1,0.9), size_hint=(None, None), pos_hint={'x': 0.02, 'top': 0.90})
-        self.add_widget(self.turn_label)
         
         self.battle_widget = BattleAreaWidget()
         self.battle_widget.on_click_callback = self._on_battle_area_click
@@ -607,19 +660,22 @@ class VisualEngine(FloatLayout):
             Animation(opacity=0, duration=0.2).start(self.btn_action)
 
     def _update_turn_label(self, data):
-        if not self.turn_label: return
         player_id = data.get("player_id")
-        name = data.get("player_name") or (self.players_map[player_id].name if player_id in self.players_map else "Гравець")
-        self.turn_label.text = f"Хід: {name}"
-        self.turn_label.color = (0.6, 1, 0.6, 0.95) if player_id in self.players_map and self.players_map[player_id].is_main_player else (1, 0.8, 0.6, 0.95)
+        for p_id, hand in self.players_map.items():
+            hand.apply_turn_highlight(p_id == player_id)
 
     def _clear_table(self, data=None):
+        if not self.cards_on_table:
+            self.durak_pairs = []
+            return 0
+
         tx, ty = -VisualConfig.sdp(150), self.height / 2
         for card in self.cards_on_table:
             anim = Animation(x=tx, y=ty, opacity=0, duration=VisualConfig.DISCARD_SPEED, t='in_back')
             anim.bind(on_complete=lambda a, w: self.remove_widget(w))
             anim.start(card)
         self.cards_on_table, self.durak_pairs = [], []
+        return VisualConfig.DISCARD_SPEED
 
     def on_touch_down(self, touch):
         return True if self.input_locked else super().on_touch_down(touch)
@@ -640,7 +696,10 @@ class VisualEngine(FloatLayout):
             if hand:
                 hand.cards = []
                 hand.clear_widgets()
-                if not hand.is_main_player: hand.setup_opponent_ui()
+                if not hand.is_main_player:
+                    hand.setup_opponent_ui()
+                else:
+                    hand._ensure_name_label()
 
         deal_queue = []
         max_cards = max([len(h['cards_data']) for h in hands_list]) if hands_list else 0
@@ -765,31 +824,30 @@ class VisualEngine(FloatLayout):
             target.pos = self.to_widget(*w_pos)
         
         target.on_click_action, target.is_face_up = self._on_battle_area_click, True
-        tx, ty, t_angle = self.center_x, self.center_y, random.randint(-15, 15)
+
+        if target not in self.cards_on_table:
+            self.cards_on_table.append(target)
 
         if is_durak:
             durak_is_def = bool(data.get("durak_is_defense"))
             pair_idx = next((i for i, p in enumerate(self.durak_pairs) if p.get("attack") and not p.get("defense")), None) if durak_is_def else None
-            
+
             if durak_is_def and pair_idx is not None:
                 self.durak_pairs[pair_idx]["defense"] = target
             else:
-                pair_idx = len(self.durak_pairs)
                 self.durak_pairs.append({"attack": target, "defense": None})
-                durak_is_def = False
 
-            positions = self.layout_manager.calc_durak_attack_positions(len(self.durak_pairs))
-            if positions and pair_idx < len(positions):
-                pos = positions[pair_idx]
-                tx, ty, t_angle = (pos[0] + VisualConfig.CARD_W * 0.3, pos[1] + VisualConfig.CARD_H * 0.2, 0) if durak_is_def else (pos[0], pos[1], 0)
-                self.layout_manager.layout_durak_table(animate_card=target, animate_pos=(tx, ty), animate_existing=True)
-        else:
-            if self.battle_widget:
-                tx, ty = self.battle_widget.center_x + random.randint(-20, 20), self.battle_widget.center_y + random.randint(-20, 20)
+            # Єдина точка розкладки: кожен новий хід плавно перецентровує всі карти.
+            self.layout_manager.layout_durak_table(animate=True, focus_card=target, on_focus_complete=callback)
+            return
+
+        tx, ty, t_angle = self.center_x, self.center_y, random.randint(-15, 15)
+        if self.battle_widget:
+            tx, ty = self.battle_widget.center_x + random.randint(-20, 20), self.battle_widget.center_y + random.randint(-20, 20)
 
         anim = Animation(center_x=tx, center_y=ty, angle=t_angle, size=(VisualConfig.CARD_W, VisualConfig.CARD_H), duration=VisualConfig.PLAY_SPEED, t='out_quad')
-        self.cards_on_table.append(target)
-        if callback: anim.bind(on_complete=lambda a, w: callback())
+        if callback:
+            anim.bind(on_complete=lambda a, w: callback())
         anim.start(target)
 
     def _sync_hands(self, data):
@@ -811,7 +869,9 @@ class VisualEngine(FloatLayout):
             if not hand.is_main_player:
                 hand.setup_opponent_ui()
                 if hand.card_count_label and hand.card_count_label not in hand.children: hand.add_widget(hand.card_count_label)
-            elif hasattr(hand, 'clean_canvas'): hand.clean_canvas()
+            elif hasattr(hand, 'clean_canvas'):
+                hand.clean_canvas()
+                hand._ensure_name_label()
 
     def _animate_take_cards(self, data, callback=None):
         hand = self.players_map.get(data.get("player_id"))
@@ -834,6 +894,8 @@ class VisualEngine(FloatLayout):
             anim.bind(on_complete=on_one)
             anim.start(card)
         self.cards_on_table = []
+        # Стіл після "взяв" має починатися з чистого стану пар.
+        self.durak_pairs = []
 
     def _animate_reshuffle_table(self, data, callback=None):
         if not self.deck_widget or not self.cards_on_table:

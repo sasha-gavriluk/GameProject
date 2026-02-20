@@ -257,9 +257,14 @@ class GamePopup(Popup):
     Базовий стилізований попап для гри.
     """
     def __init__(self, **kwargs):
+        self._adaptive_enabled = kwargs.pop("adaptive", True)
+        self._base_size_hint = kwargs.get("size_hint", (0.8, 0.65))
+        self._base_size = kwargs.get("size", (VisualConfig.sdp(520), VisualConfig.sdp(360)))
+
         kwargs.setdefault("auto_dismiss", True)
         kwargs.setdefault("title_align", "center")
         kwargs.setdefault("title_color", (0.95, 0.97, 0.99, 1))
+        kwargs.setdefault("size_hint", self._base_size_hint)
         super().__init__(**kwargs)
 
         self.background = ""
@@ -276,7 +281,41 @@ class GamePopup(Popup):
         Window.bind(size=lambda *_: self._apply_scale())
         self._apply_scale()
 
+    @staticmethod
+    def _is_phone_screen():
+        return min(Window.size) <= 800
+
+    def _apply_adaptive_size(self):
+        if not self._adaptive_enabled:
+            return
+
+        is_phone = self._is_phone_screen()
+
+        # Якщо попап заданий фіксованим size, масштабуємо його до вікна.
+        if self._base_size_hint == (None, None):
+            max_w = Window.width * (0.94 if is_phone else 0.86)
+            max_h = Window.height * (0.90 if is_phone else 0.82)
+            base_w, base_h = self._base_size
+            scale = min(1.0, max_w / max(1, base_w), max_h / max(1, base_h))
+            self.size_hint = (None, None)
+            self.size = (base_w * scale, base_h * scale)
+            return
+
+        base_sx, base_sy = self._base_size_hint
+        sx = 0.88 if base_sx is None else base_sx
+        sy = 0.70 if base_sy is None else base_sy
+
+        if is_phone:
+            sx = min(0.94, max(0.82, sx))
+            sy = min(0.90, max(0.50, sy))
+        else:
+            sx = min(0.88, max(0.45, sx))
+            sy = min(0.82, max(0.35, sy))
+
+        self.size_hint = (sx, sy)
+
     def _apply_scale(self):
+        self._apply_adaptive_size()
         self.separator_height = VisualConfig.sdp(1)
         self.title_size = VisualConfig.ssp(22)
         self._radius = VisualConfig.sdp(16)
@@ -674,6 +713,11 @@ class HandWidget(FloatLayout, Player):
         self.size_hint = (None, None)
         self.cards = [] 
         self.bg_rect = None 
+        self.bg_color_instr = None
+        self._panel_default_color = (0, 0, 0, 0.4)
+        self._panel_active_color = (0.88, 0.72, 0.12, 0.55)
+        self._name_default_color = (0.95, 0.97, 0.99, 0.96)
+        self._name_active_color = (0.98, 0.87, 0.35, 1)
 
         if self.is_main_player:
             self._base_size = (600, 150)
@@ -684,6 +728,8 @@ class HandWidget(FloatLayout, Player):
             self.size = (VisualConfig.sdp(self._base_size[0]), VisualConfig.sdp(self._base_size[1]))
             self.base_y = 0
             self.setup_opponent_ui()
+
+        self._ensure_name_label()
 
         self.card_count_label = None
         if not self.is_main_player and VisualConfig.SHOW_BOT_CARD_COUNT:
@@ -717,8 +763,26 @@ class HandWidget(FloatLayout, Player):
             self.bg_rect.radius = [VisualConfig.sdp(10)]
         self.update_hand_layout()
 
+    def _ensure_name_label(self):
+        if hasattr(self, 'lbl_name') and self.lbl_name in self.children:
+            return
+        self.lbl_name = Label(
+            text=self.name,
+            font_size=VisualConfig.ssp(12),
+            bold=True,
+            color=self._name_default_color,
+            size_hint=(None, None),
+            width=VisualConfig.sdp(160),
+            height=VisualConfig.sdp(20),
+            halign='center',
+            valign='middle',
+        )
+        self.lbl_name.bind(size=lambda s, w: setattr(s, 'text_size', w))
+        self.add_widget(self.lbl_name)
+
     def clean_canvas(self):
         """Очищає намальований фон (темну зону), щоб не було дублікатів"""
+        self.bg_color_instr = None
         if self.bg_rect:
             self.canvas.before.remove(self.bg_rect)
             self.bg_rect = None
@@ -730,27 +794,40 @@ class HandWidget(FloatLayout, Player):
         self.clean_canvas()
 
         with self.canvas.before:
-            Color(0, 0, 0, 0.4)
+            self.bg_color_instr = Color(*self._panel_default_color)
             self.bg_rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[VisualConfig.sdp(10)])
         
         self.bind(pos=self.update_bg, size=self.update_bg)
-
-        # Ім'я зверху
-        if not hasattr(self, 'lbl_name') or self.lbl_name not in self.children:
-            self.lbl_name = Label(
-                text=self.name,
-                font_size=VisualConfig.ssp(12),
-                bold=True,
-                size_hint=(1, None),
-                height=VisualConfig.sdp(20),
-                pos_hint={'top': 1, 'center_x': 0.5}
-            )
-            self.add_widget(self.lbl_name)
+        self._ensure_name_label()
 
     def update_bg(self, *args):
         if self.bg_rect:
             self.bg_rect.pos = self.pos
             self.bg_rect.size = self.size
+
+    def _update_name_position(self):
+        if not hasattr(self, 'lbl_name'):
+            return
+        self.lbl_name.width = max(VisualConfig.sdp(120), self.width)
+        self.lbl_name.center_x = self.center_x
+        self.lbl_name.y = self.y + self.height + VisualConfig.sdp(4)
+
+    def apply_turn_highlight(self, is_current_turn):
+        self._ensure_name_label()
+        self.lbl_name.color = self._name_default_color
+        if self.bg_color_instr:
+            self.bg_color_instr.rgba = self._panel_default_color
+
+        if not is_current_turn:
+            return
+
+        if self.is_main_player:
+            self.lbl_name.color = self._name_active_color
+        else:
+            if self.bg_color_instr:
+                self.bg_color_instr.rgba = self._panel_active_color
+            else:
+                self.lbl_name.color = self._name_active_color
 
     def add_card(self, card_widget, initial_pos=None):
         """
@@ -805,8 +882,10 @@ class HandWidget(FloatLayout, Player):
             self.update_hand_layout()
 
     def update_hand_layout(self, *args):
+        self._ensure_name_label()
         if not self.cards:
             if self.card_count_label: self.card_count_label.text = ""
+            self._update_name_position()
             return
 
         count = len(self.cards)
@@ -891,6 +970,8 @@ class HandWidget(FloatLayout, Player):
                 self.card_count_label.text = f"x{count}"
                 self.remove_widget(self.card_count_label)
                 self.add_widget(self.card_count_label)
+
+        self._update_name_position()
 
     def on_card_touch(self, instance, touch):
         if not self.is_main_player: return False

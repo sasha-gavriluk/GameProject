@@ -1,5 +1,6 @@
 import asyncio
 from kivy.clock import Clock
+from kivy.core.window import Window
 
 from gui.screen.BaseScreen import BaseScreen
 from gui.NetworkBridge import net
@@ -162,6 +163,8 @@ class LobbyScreen(BaseScreen):
         self.room_settings_dialog = RoomSettingsDialog(self)
         self.game_settings_dialog = GameSettingsDialog(self)
         self._build_in_room_ui()
+        Window.bind(size=lambda *_: self._apply_phone_layout())
+        Clock.schedule_once(lambda *_: self._apply_phone_layout(), 0)
 
     # --- СТАН 2: В СЕРЕДИНІ КІМНАТИ (ВЕРТИКАЛЬНИЙ ДИЗАЙН) ---
     def _build_in_room_ui(self):
@@ -177,10 +180,10 @@ class LobbyScreen(BaseScreen):
         self.in_room_layout.add_widget(self.lbl_room_id)
 
         # ЦЕНТР: Вертикальне розділення
-        main_box = self.ui.dynamic.create("BoxLayout", orientation='vertical', size_hint=(0.96, 0.74), pos_hint={'center_x': 0.5, 'top': 0.87}, spacing=15)
+        self.main_box = self.ui.dynamic.create("BoxLayout", orientation='vertical', size_hint=(0.96, 0.74), pos_hint={'center_x': 0.5, 'top': 0.87}, spacing=15)
         
         # --- ВЕРХНЯ ПОЛОВИНА: Дії та гравці ---
-        top_panel = self.ui.dynamic.create("BoxLayout", orientation='vertical', size_hint_y=0.48, spacing=10)
+        self.top_panel = self.ui.dynamic.create("BoxLayout", orientation='vertical', size_hint_y=0.48, spacing=10)
         
         # 3 кнопки ігор
         self.game_toggles_box = self.ui.dynamic.create("GridLayout", cols=3, size_hint_y=None, height=VisualConfig.sdp(50), spacing=10)
@@ -192,12 +195,12 @@ class LobbyScreen(BaseScreen):
         for k, btn in self.game_btns.items():
             btn.bind(on_release=lambda instance, val=k: self._on_game_change(val))
             self.game_toggles_box.add_widget(btn)
-        top_panel.add_widget(self.game_toggles_box)
+        self.top_panel.add_widget(self.game_toggles_box)
         
         # Кнопка Налаштування гри
-        btn_game_settings = self.ui.dynamic.create("GameButton", text="Налаштування гри", size_hint_y=None, height=VisualConfig.sdp(50))
-        btn_game_settings.bind(on_release=lambda x: self.game_settings_dialog.open())
-        top_panel.add_widget(btn_game_settings)
+        self.btn_game_settings = self.ui.dynamic.create("GameButton", text="Налаштування гри", size_hint_y=None, height=VisualConfig.sdp(50))
+        self.btn_game_settings.bind(on_release=lambda x: self.game_settings_dialog.open())
+        self.top_panel.add_widget(self.btn_game_settings)
         
         # Список гравців: в один ряд з переносом на новий, якщо не влазять
         self.players_box = self.ui.dynamic.create("BoxLayout", orientation='vertical', size_hint_y=0.5, spacing=VisualConfig.sdp(6))
@@ -211,49 +214,118 @@ class LobbyScreen(BaseScreen):
         )
         self.players_box.add_widget(self.players_title)
         self.players_box.add_widget(self.players_wrap)
-        top_panel.add_widget(self.players_box)
+        self.top_panel.add_widget(self.players_box)
         
-        main_box.add_widget(top_panel)
+        self.main_box.add_widget(self.top_panel)
         
         # --- НИЖНЯ ПОЛОВИНА: Чат (Ваші компоненти) ---
-        bottom_panel = self.ui.dynamic.create("ChatSurface", orientation='vertical', size_hint_y=0.7, spacing=VisualConfig.sdp(8))
+        self.bottom_panel = self.ui.dynamic.create("ChatSurface", orientation='vertical', size_hint_y=0.7, spacing=VisualConfig.sdp(8))
         
         self.chat_history = self.ui.dynamic.create("ChatHistoryLabel")
         
         self.chat_scroll = self.ui.dynamic.create("ChatScrollView", size_hint_y=1)
         self.chat_scroll.add_widget(self.chat_history)
-        bottom_panel.add_widget(self.chat_scroll)
+        self.bottom_panel.add_widget(self.chat_scroll)
         
         # Контейнер вводу чату тепер має фіксовану висоту (щоб не розтягувати TextInput)
-        chat_input_box = self.ui.dynamic.create("ChatSurface", size_hint_y=0.2, padding=(VisualConfig.sdp(6), VisualConfig.sdp(6), VisualConfig.sdp(6), VisualConfig.sdp(6)))
+        self.chat_input_box = self.ui.dynamic.create("ChatSurface", size_hint_y=0.2, padding=(VisualConfig.sdp(6), VisualConfig.sdp(6), VisualConfig.sdp(6), VisualConfig.sdp(6)))
         self.chat_input = self.ui.dynamic.create("ChatTextInput", hint_text="Повідомлення...") # size_hint_y=0.2 прибрано
         self.chat_input.bind(on_text_validate=self.send_msg)
-        btn_send = self.ui.dynamic.create("GameButton", text="Надіслати", size_hint_x=0.3)
-        btn_send.bind(on_release=self.send_msg)
-        chat_input_box.add_widget(self.chat_input)
-        chat_input_box.add_widget(btn_send)
-        bottom_panel.add_widget(chat_input_box)
+        self.btn_send = self.ui.dynamic.create("GameButton", text="Надіслати", size_hint_x=0.3)
+        self.btn_send.bind(on_release=self.send_msg)
+        self.chat_input_box.add_widget(self.chat_input)
+        self.chat_input_box.add_widget(self.btn_send)
+        self.bottom_panel.add_widget(self.chat_input_box)
         
-        main_box.add_widget(bottom_panel)
-        self.in_room_layout.add_widget(main_box)
+        self.main_box.add_widget(self.bottom_panel)
+        self.in_room_layout.add_widget(self.main_box)
         
         # --- НИЗ: 3 Кнопки ---
-        bottom_bar = self.ui.dynamic.create("BoxLayout", orientation='horizontal', size_hint=(0.96, None), height=VisualConfig.sdp(60), pos_hint={'center_x': 0.5, 'y': 0.02}, spacing=10)
+        self.bottom_bar = self.ui.dynamic.create("BoxLayout", orientation='horizontal', size_hint=(0.96, None), height=VisualConfig.sdp(60), pos_hint={'center_x': 0.5, 'y': 0.02}, spacing=10)
         
-        btn_room_settings = self.ui.dynamic.create("MenuButton", text="Налаш. кімнати")
-        btn_room_settings.bind(on_release=lambda x: self.room_settings_dialog.open())
+        self.btn_room_settings = self.ui.dynamic.create("MenuButton", text="Налаш. кімнати")
+        self.btn_room_settings.bind(on_release=lambda x: self.room_settings_dialog.open())
         
         self.btn_action = self.ui.dynamic.create("MenuButton", text="Готовий")
         self.btn_action.bind(on_release=self._on_action_click)
         
-        btn_leave = self.ui.dynamic.create("MenuButton", text="Вийти", background_color=(0.8, 0.2, 0.2, 1))
-        btn_leave.bind(on_release=self.leave_room)
+        self.btn_leave = self.ui.dynamic.create("MenuButton", text="Вийти", background_color=(0.8, 0.2, 0.2, 1))
+        self.btn_leave.bind(on_release=self.leave_room)
         
-        bottom_bar.add_widget(btn_room_settings)
-        bottom_bar.add_widget(self.btn_action)
-        bottom_bar.add_widget(btn_leave)
+        self.bottom_bar.add_widget(self.btn_room_settings)
+        self.bottom_bar.add_widget(self.btn_action)
+        self.bottom_bar.add_widget(self.btn_leave)
         
-        self.in_room_layout.add_widget(bottom_bar)
+        self.in_room_layout.add_widget(self.bottom_bar)
+
+    @staticmethod
+    def _is_phone_screen():
+        # Коротка сторона <= 800px покриває більшість телефонів у portrait/landscape.
+        return min(Window.size) <= 800
+
+    def _apply_phone_layout(self):
+        is_phone = self._is_phone_screen()
+
+        if is_phone:
+            self.main_box.size_hint = (0.98, 0.80)
+            self.main_box.pos_hint = {'center_x': 0.5, 'top': 0.90}
+            self.main_box.spacing = VisualConfig.sdp(8)
+
+            self.top_panel.size_hint_y = 0.44
+            self.top_panel.spacing = VisualConfig.sdp(6)
+            self.bottom_panel.size_hint_y = 0.56
+            self.bottom_panel.spacing = VisualConfig.sdp(6)
+
+            self.game_toggles_box.height = VisualConfig.sdp(44)
+            self.game_toggles_box.spacing = VisualConfig.sdp(6)
+            self.btn_game_settings.height = VisualConfig.sdp(44)
+
+            self.players_title.height = VisualConfig.sdp(24)
+            self.players_box.spacing = VisualConfig.sdp(4)
+            self.players_wrap.spacing = (VisualConfig.sdp(6), VisualConfig.sdp(6))
+
+            self.chat_input_box.size_hint_y = 0.26
+            self.btn_send.size_hint_x = 0.38
+
+            self.bottom_bar.height = VisualConfig.sdp(54)
+            self.bottom_bar.spacing = VisualConfig.sdp(6)
+            self.bottom_bar.pos_hint = {'center_x': 0.5, 'y': 0.01}
+
+            self.lbl_name.size_hint = (0.6, 0.08)
+            self.lbl_room_id.size_hint = (0.5, 0.08)
+
+            self.room_settings_dialog.view.size_hint = (0.88, 0.50)
+            self.game_settings_dialog.view.size_hint = (0.94, 0.80)
+        else:
+            self.main_box.size_hint = (0.96, 0.74)
+            self.main_box.pos_hint = {'center_x': 0.5, 'top': 0.87}
+            self.main_box.spacing = 15
+
+            self.top_panel.size_hint_y = 0.48
+            self.top_panel.spacing = 10
+            self.bottom_panel.size_hint_y = 0.7
+            self.bottom_panel.spacing = VisualConfig.sdp(8)
+
+            self.game_toggles_box.height = VisualConfig.sdp(50)
+            self.game_toggles_box.spacing = 10
+            self.btn_game_settings.height = VisualConfig.sdp(50)
+
+            self.players_title.height = VisualConfig.sdp(30)
+            self.players_box.spacing = VisualConfig.sdp(6)
+            self.players_wrap.spacing = (VisualConfig.sdp(8), VisualConfig.sdp(8))
+
+            self.chat_input_box.size_hint_y = 0.2
+            self.btn_send.size_hint_x = 0.3
+
+            self.bottom_bar.height = VisualConfig.sdp(60)
+            self.bottom_bar.spacing = 10
+            self.bottom_bar.pos_hint = {'center_x': 0.5, 'y': 0.02}
+
+            self.lbl_name.size_hint = (0.4, 0.1)
+            self.lbl_room_id.size_hint = (0.4, 0.1)
+
+            self.room_settings_dialog.view.size_hint = (0.6, 0.4)
+            self.game_settings_dialog.view.size_hint = (0.8, 0.65)
 
     # --- ЛОГІКА ---
     def on_enter(self, *args):
@@ -322,6 +394,9 @@ class LobbyScreen(BaseScreen):
 
         # Оновлення списку гравців
         self.players_wrap.clear_widgets()
+        is_phone = self._is_phone_screen()
+        max_player_width = VisualConfig.sdp(220) if is_phone else VisualConfig.sdp(260)
+        player_row_width = min(max_player_width, max(VisualConfig.sdp(150), self.players_wrap.width - VisualConfig.sdp(8)))
         
         all_ready = True
         for name, state in players.items():
@@ -333,7 +408,7 @@ class LobbyScreen(BaseScreen):
                 text=f"{name} {role} - {status}",
                 font_size=VisualConfig.ssp(16),
                 size_hint=(None, None),
-                width=VisualConfig.sdp(260),
+                width=player_row_width,
                 height=VisualConfig.sdp(34),
                 halign='left',
                 valign='middle'
