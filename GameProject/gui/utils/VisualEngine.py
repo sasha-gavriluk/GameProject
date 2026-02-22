@@ -4,7 +4,7 @@ import math
 
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
-from kivy.graphics import Color, Rectangle
+from kivy.graphics import Color, Rectangle, RoundedRectangle
 from kivy.animation import Animation
 from kivy.clock import Clock
 from kivy.uix.boxlayout import BoxLayout
@@ -198,15 +198,47 @@ class DialogManager:
 
         view = GamePopup(title="Рахунок", size_hint=(0.8, 0.6), auto_dismiss=not is_round_end)
         layout = BoxLayout(orientation='vertical', padding=VisualConfig.sdp(20), spacing=VisualConfig.sdp(10))
-        layout.add_widget(Label(text="Результати раунду" if is_round_end else "Поточний рахунок", font_size=VisualConfig.ssp(24), bold=True, size_hint_y=0.2))
+        layout.add_widget(Label(
+            text="Результати раунду" if is_round_end else "Поточний рахунок",
+            font_size=VisualConfig.ssp(24),
+            bold=True,
+            size_hint_y=0.22
+        ))
 
+        cards_row = BoxLayout(orientation='horizontal', spacing=VisualConfig.sdp(10), size_hint_y=0.58)
         for p in players_data:
-            score_text = f"{p['name']}: {p['score']}"
-            if p['score'] > 225: score_text += " (Вибув!)"
-            elif p['score'] == 0 and p.get('just_reset', False): score_text += " (Золоті 225!)"
-            layout.add_widget(Label(text=score_text, font_size=VisualConfig.ssp(18)))
+            player_card = BoxLayout(
+                orientation='vertical',
+                padding=VisualConfig.sdp(10),
+                spacing=VisualConfig.sdp(8),
+            )
+            with player_card.canvas.before:
+                Color(0.13, 0.16, 0.20, 0.96)
+                bg = RoundedRectangle(pos=player_card.pos, size=player_card.size, radius=[VisualConfig.sdp(10)])
+            player_card.bind(
+                pos=lambda w, *_args, _bg=bg: setattr(_bg, "pos", w.pos),
+                size=lambda w, *_args, _bg=bg: setattr(_bg, "size", w.size)
+            )
 
-        btn = GameButton(text="Наступний раунд" if is_round_end else "Продовжити гру", size_hint_y=0.2)
+            player_card.add_widget(Label(text=p['name'], font_size=VisualConfig.ssp(18), bold=True))
+
+            score_text = str(p['score'])
+            if p['score'] > 225:
+                score_text += "\n(Вибув)"
+            elif p['score'] == 0 and p.get('just_reset', False):
+                score_text += "\n(Золоті 225!)"
+            player_card.add_widget(Label(text=score_text, font_size=VisualConfig.ssp(20), bold=True))
+
+            cards_row.add_widget(player_card)
+
+        layout.add_widget(cards_row)
+
+        btn = GameButton(
+            text="Наступний раунд" if is_round_end else "Продовжити гру",
+            size_hint=(None, None),
+            size=(VisualConfig.sdp(240), VisualConfig.sdp(54)),
+            pos_hint={'center_x': 0.5}
+        )
         btn.bind(on_release=lambda x: self._trigger_new_round(view) if is_round_end else view.dismiss())
         layout.add_widget(btn)
         view.content = layout
@@ -244,6 +276,23 @@ class DialogManager:
         view.content = layout
         view.open()
 
+    def show_bridge_decision(self, player_id):
+        if not self.engine.hero_widget or self.engine.hero_widget.player_id != player_id:
+            return
+        view = GamePopup(title="Брідж", size_hint=(None, None), size=(VisualConfig.sdp(430), VisualConfig.sdp(210)), auto_dismiss=False)
+        layout = BoxLayout(orientation='vertical', padding=VisualConfig.sdp(20), spacing=VisualConfig.sdp(10))
+        layout.add_widget(Label(text="Завершити раунд чи продовжити гру?", font_size=VisualConfig.ssp(18), size_hint_y=0.45))
+
+        btn_end = GameButton(text="Завершити раунд", size_hint_y=0.275)
+        btn_cont = GameButton(text="Продовжити гру", size_hint_y=0.275)
+        btn_end.bind(on_release=lambda x: self._send_choice('set_bridge_decision', 'choice', 'end', view))
+        btn_cont.bind(on_release=lambda x: self._send_choice('set_bridge_decision', 'choice', 'continue', view))
+
+        layout.add_widget(btn_end)
+        layout.add_widget(btn_cont)
+        view.content = layout
+        view.open()
+
     def _send_choice(self, action, key, value, popup_view):
         popup_view.dismiss()
         if self.engine.event_callback:
@@ -256,6 +305,34 @@ class DialogManager:
     def _trigger_new_round(self, popup):
         popup.dismiss()
         if self.engine.event_callback: self.engine.event_callback({'type': 'ui_action', 'action': 'start_new_round'})
+
+    def show_eliminated_popup(self, online=False):
+        if online:
+            view = GamePopup(title="Поразка", size_hint=(None, None), size=(VisualConfig.sdp(430), VisualConfig.sdp(220)), auto_dismiss=False)
+            layout = BoxLayout(orientation='vertical', padding=VisualConfig.sdp(20), spacing=VisualConfig.sdp(12))
+            layout.add_widget(Label(text="Ви вибули з гри.", font_size=VisualConfig.ssp(22), bold=True, size_hint_y=0.45))
+            layout.add_widget(Label(text="Гра продовжується без вас.", font_size=VisualConfig.ssp(16), size_hint_y=0.25))
+            btn = GameButton(text="Продовжити", size_hint=(None, None), size=(VisualConfig.sdp(220), VisualConfig.sdp(52)), pos_hint={'center_x': 0.5})
+            btn.bind(on_release=lambda *_: view.dismiss())
+            layout.add_widget(btn)
+            view.content = layout
+            view.open()
+            return
+
+        view = GamePopup(title="Поразка", size_hint=(None, None), size=(VisualConfig.sdp(460), VisualConfig.sdp(260)), auto_dismiss=False)
+        layout = BoxLayout(orientation='vertical', padding=VisualConfig.sdp(20), spacing=VisualConfig.sdp(12))
+        layout.add_widget(Label(text="Ви програли", font_size=VisualConfig.ssp(22), bold=True, size_hint_y=0.4))
+        layout.add_widget(Label(text="Почати нову гру чи вийти в меню?", font_size=VisualConfig.ssp(16), size_hint_y=0.2))
+        btn_row = BoxLayout(orientation='horizontal', spacing=VisualConfig.sdp(10), size_hint_y=0.4)
+        btn_new = GameButton(text="Нова гра")
+        btn_exit = GameButton(text="Вийти в меню")
+        btn_new.bind(on_release=lambda *_: self._trigger_new_round(view))
+        btn_exit.bind(on_release=lambda *_: self._trigger_exit_to_menu(view))
+        btn_row.add_widget(btn_new)
+        btn_row.add_widget(btn_exit)
+        layout.add_widget(btn_row)
+        view.content = layout
+        view.open()
 
 
 # ==========================================
@@ -491,6 +568,8 @@ class VisualEngine(FloatLayout):
         self.suit_indicator = None
 
         self.input_locked = False
+        self.online_mode = False
+        self.hero_elimination_popup_shown = False
 
         with self.canvas.before:
             Color(*VisualConfig.TABLE_COLOR)
@@ -532,6 +611,8 @@ class VisualEngine(FloatLayout):
             Clock.schedule_once(done, duration)
         elif cmd == "PLAY_CARD": 
             self._play_card(instruction, callback=done)
+        elif cmd == "PLAY_CARDS":
+            self._play_cards(instruction, callback=done)
         elif cmd == "TAKE_CARDS": 
             self._animate_take_cards(instruction, callback=done)
         elif cmd == "DRAW_CARDS_ANIMATION": 
@@ -560,6 +641,9 @@ class VisualEngine(FloatLayout):
             elif cmd == "SHOW_WINNER": self.dialogs.show_winner_popup(instruction)
             elif cmd == "SHOW_SUIT_SELECTOR": self.dialogs.show_suit_selection(instruction.get("player_id"))
             elif cmd == "SHOW_BONUS_SELECTOR": self.dialogs.show_jack_bonus_selection(instruction.get("player_id"), instruction.get("mult"), instruction.get("sub"))
+            elif cmd == "SHOW_BRIDGE_DECISION": self.dialogs.show_bridge_decision(instruction.get("player_id"))
+            elif cmd == "INVALID_CHAIN_CARD": self._show_invalid_chain(instruction)
+            elif cmd == "SHOW_ELIMINATED": self.dialogs.show_eliminated_popup(bool(instruction.get("online", False)))
             elif cmd == "SHOW_SCORES": self.dialogs.show_score_popup(instruction.get("is_round_end"), instruction.get("scores"))
             
             done()
@@ -572,6 +656,8 @@ class VisualEngine(FloatLayout):
         self.clear_widgets()
         self.input_locked = True
         self.game_type = data.get("game_type")
+        self.online_mode = bool(data.get("online", False))
+        self.hero_elimination_popup_shown = False
         self.btn_back = None
         self.btn_score = None
 
@@ -627,17 +713,21 @@ class VisualEngine(FloatLayout):
     def _on_battle_area_click(self):
         if self.input_locked or not self.hero_widget or not self.hero_widget.selected_cards: return
         cards_ids = [f"{c.rank}_{c.suit}" for c in self.hero_widget.selected_cards]
-        
-        for c in list(self.hero_widget.selected_cards): c.selected = False
-        self.hero_widget.selected_cards.clear()
-        self.hero_widget.update_hand_layout() 
-        if self.battle_widget: self.battle_widget.active = False
+
+        if self.game_type != "BRIDGE":
+            for c in list(self.hero_widget.selected_cards):
+                c.selected = False
+            self.hero_widget.selected_cards.clear()
+            self.hero_widget.update_hand_layout()
+            if self.battle_widget:
+                self.battle_widget.active = False
 
         if self.event_callback:
             self.event_callback({'type': 'ui_action', 'action': 'play', 'cards': cards_ids})
 
     def _on_deck_click(self, instance):
         if self.input_locked or self.game_type != "BRIDGE": return
+        if self.hero_widget and getattr(self.hero_widget, "is_eliminated", False): return
         if self.event_callback: self.event_callback({'type': 'ui_action', 'action': 'take'})
 
     def _start_deck_animation(self, dt):
@@ -694,12 +784,16 @@ class VisualEngine(FloatLayout):
         for p_data in hands_list:
             hand = self.players_map.get(p_data["player_id"])
             if hand:
+                if hasattr(hand, "set_eliminated"):
+                    hand.set_eliminated(bool(p_data.get("is_eliminated", False)))
                 hand.cards = []
                 hand.clear_widgets()
                 if not hand.is_main_player:
                     hand.setup_opponent_ui()
                 else:
                     hand._ensure_name_label()
+
+        self._check_online_hero_elimination_popup()
 
         deal_queue = []
         max_cards = max([len(h['cards_data']) for h in hands_list]) if hands_list else 0
@@ -802,12 +896,10 @@ class VisualEngine(FloatLayout):
             delay += step
         return delay + 0.5
 
-    def _play_card(self, data, callback=None):
-        p_id, card_data, is_durak = data.get("player_id"), data.get("card"), (self.game_type == "DURAK")
-        hand = self.players_map.get(p_id)
-        if not hand: 
-            if callback: callback()
-            return
+    def _prepare_table_card(self, player_id, card_data):
+        hand = self.players_map.get(player_id)
+        if not hand:
+            return None, None
 
         target = next((c for c in hand.cards if f"{c.rank}_{c.suit}" == card_data.get("id")), None)
         if not target:
@@ -815,18 +907,149 @@ class VisualEngine(FloatLayout):
             target.center, target.opacity = hand.center, 0
             self.add_widget(target)
             Clock.schedule_once(lambda dt: setattr(target, 'opacity', 1), 0.05)
-        
+
         if target in hand.cards:
             hand.remove_card(target)
             w_pos = target.to_window(*target.pos)
-            if target.parent: target.parent.remove_widget(target)
+            if target.parent:
+                target.parent.remove_widget(target)
             self.add_widget(target)
             target.pos = self.to_widget(*w_pos)
-        
-        target.on_click_action, target.is_face_up = self._on_battle_area_click, True
+        elif target.parent is not self:
+            if target.parent:
+                target.parent.remove_widget(target)
+            self.add_widget(target)
+
+        target.on_click_action = self._on_battle_area_click
+        target.is_face_up = True
+        target.size = (VisualConfig.CARD_W, VisualConfig.CARD_H)
 
         if target not in self.cards_on_table:
             self.cards_on_table.append(target)
+
+        return hand, target
+
+    def _clear_hero_played_selection(self, card_ids):
+        if self.game_type != "BRIDGE" or not self.hero_widget:
+            return
+        ids = set(card_ids or [])
+        if not ids:
+            return
+        hand = self.hero_widget
+        for c in list(hand.selected_cards):
+            cid = f"{c.rank}_{c.suit}"
+            if cid in ids:
+                c.selected = False
+                hand.selected_cards.remove(c)
+        hand.update_hand_layout()
+        if self.battle_widget:
+            self.battle_widget.active = (len(hand.selected_cards) > 0)
+
+    def _layout_standard_table(self, animate=True, focus_cards=None, on_complete=None):
+        cards = [c for c in self.cards_on_table if c]
+        if not cards:
+            if on_complete:
+                on_complete()
+            return
+
+        count = len(cards)
+        card_w = VisualConfig.CARD_W
+        center_x = self.battle_widget.center_x if self.battle_widget else self.center_x
+        center_y = self.battle_widget.center_y if self.battle_widget else self.center_y
+        max_w = (self.battle_widget.width * 0.78) if self.battle_widget else (self.width * 0.62)
+        max_w = max(card_w, max_w)
+
+        # Для Бріджу карти мають лягати щільно одна на одну.
+        if self.game_type == "BRIDGE":
+            natural_step = card_w * 0.22
+            step = min(natural_step, max(VisualConfig.sdp(8), (max_w - card_w) / max(1, count - 1)))
+            arc_amp = VisualConfig.sdp(6)
+            angle_span = 8
+        else:
+            step = min(VisualConfig.sdp(34), max(VisualConfig.sdp(14), (max_w - card_w) / max(1, count - 1)))
+            arc_amp = VisualConfig.sdp(12)
+            angle_span = 16
+
+        total_w = (count - 1) * step + card_w
+        start_cx = center_x - (total_w / 2) + (card_w / 2)
+
+        focus_set = set(focus_cards or [])
+        callback_bound = False
+
+        for i, card in enumerate(cards):
+            t = 0 if count == 1 else (i / (count - 1))
+            arc = math.sin(t * math.pi) * arc_amp
+            angle = -(angle_span / 2) + (angle_span * t)
+            tx = start_cx + (i * step)
+            ty = center_y + arc
+
+            if animate:
+                Animation.stop_all(card)
+                anim = Animation(
+                    center_x=tx,
+                    center_y=ty,
+                    angle=angle,
+                    size=(VisualConfig.CARD_W, VisualConfig.CARD_H),
+                    duration=VisualConfig.PLAY_SPEED,
+                    t='out_quad'
+                )
+                should_bind = (on_complete is not None) and (card in focus_set or (not focus_set and i == len(cards) - 1))
+                if should_bind and not callback_bound:
+                    anim.bind(on_complete=lambda *_: on_complete())
+                    callback_bound = True
+                anim.start(card)
+            else:
+                card.center_x, card.center_y = tx, ty
+                card.angle = angle
+                card.size = (VisualConfig.CARD_W, VisualConfig.CARD_H)
+
+        if on_complete and not animate:
+            on_complete()
+        elif on_complete and animate and not callback_bound:
+            Clock.schedule_once(lambda dt: on_complete(), VisualConfig.PLAY_SPEED)
+
+    def _bridge_stack_center(self):
+        if self.battle_widget:
+            return self.battle_widget.center_x, self.battle_widget.center_y
+        return self.center_x, self.center_y
+
+    def _animate_to_bridge_stack(self, cards, on_complete=None):
+        cards = [c for c in (cards or []) if c]
+        if not cards:
+            if on_complete:
+                on_complete()
+            return
+
+        tx, ty = self._bridge_stack_center()
+        callback_bound = False
+        for i, card in enumerate(cards):
+            Animation.stop_all(card)
+            offset_x = random.randint(-8, 8)
+            offset_y = random.randint(-8, 8)
+            angle = random.randint(-10, 10)
+            anim = Animation(
+                center_x=tx + offset_x,
+                center_y=ty + offset_y,
+                angle=angle,
+                size=(VisualConfig.CARD_W, VisualConfig.CARD_H),
+                duration=VisualConfig.PLAY_SPEED,
+                t='out_quad'
+            )
+            if on_complete and not callback_bound and i == len(cards) - 1:
+                anim.bind(on_complete=lambda *_: on_complete())
+                callback_bound = True
+            anim.start(card)
+
+        if on_complete and not callback_bound:
+            Clock.schedule_once(lambda dt: on_complete(), VisualConfig.PLAY_SPEED)
+
+    def _play_card(self, data, callback=None):
+        p_id, card_data, is_durak = data.get("player_id"), data.get("card"), (self.game_type == "DURAK")
+        self._clear_hero_played_selection([card_data.get("id")])
+        hand, target = self._prepare_table_card(p_id, card_data)
+        if not hand or not target:
+            if callback: callback()
+            return
 
         if is_durak:
             durak_is_def = bool(data.get("durak_is_defense"))
@@ -841,19 +1064,64 @@ class VisualEngine(FloatLayout):
             self.layout_manager.layout_durak_table(animate=True, focus_card=target, on_focus_complete=callback)
             return
 
-        tx, ty, t_angle = self.center_x, self.center_y, random.randint(-15, 15)
-        if self.battle_widget:
-            tx, ty = self.battle_widget.center_x + random.randint(-20, 20), self.battle_widget.center_y + random.randint(-20, 20)
+        if self.game_type == "BRIDGE":
+            self._animate_to_bridge_stack([target], on_complete=callback)
+            return
 
-        anim = Animation(center_x=tx, center_y=ty, angle=t_angle, size=(VisualConfig.CARD_W, VisualConfig.CARD_H), duration=VisualConfig.PLAY_SPEED, t='out_quad')
-        if callback:
-            anim.bind(on_complete=lambda a, w: callback())
-        anim.start(target)
+        self._layout_standard_table(animate=True, focus_cards=[target], on_complete=callback)
+
+    def _play_cards(self, data, callback=None):
+        p_id = data.get("player_id")
+        cards_data = data.get("cards", []) or []
+        self._clear_hero_played_selection([c.get("id") for c in cards_data])
+        is_durak = (self.game_type == "DURAK")
+        if not cards_data:
+            if callback:
+                callback()
+            return
+
+        new_targets = []
+        for card_data in cards_data:
+            hand, target = self._prepare_table_card(p_id, card_data)
+            if hand and target:
+                new_targets.append(target)
+
+        if not new_targets:
+            if callback:
+                callback()
+            return
+
+        if is_durak:
+            # Для Дурня відпрацьовуємо покроково через існуючу логіку PLAY_CARD.
+            queue = list(cards_data)
+            def play_next(*_):
+                if not queue:
+                    if callback:
+                        callback()
+                    return
+                card_info = queue.pop(0)
+                self._play_card(
+                    {
+                        "player_id": p_id,
+                        "card": card_info,
+                        "durak_is_defense": data.get("durak_is_defense", False),
+                    },
+                    callback=play_next
+                )
+            play_next()
+            return
+
+        if self.game_type == "BRIDGE":
+            self._animate_to_bridge_stack(new_targets, on_complete=callback)
+            return
+
+        self._layout_standard_table(animate=True, focus_cards=new_targets, on_complete=callback)
 
     def _sync_hands(self, data):
         for p_data in data.get("hands", []):
             hand = self.players_map.get(p_data["player_id"])
             if not hand: continue
+            is_eliminated = bool(p_data.get("is_eliminated", False))
             new_cards = p_data.get("cards_data", [])
             new_ids = {f"{c['rank']}_{c['suit']}" for c in new_cards}
             
@@ -872,6 +1140,57 @@ class VisualEngine(FloatLayout):
             elif hasattr(hand, 'clean_canvas'):
                 hand.clean_canvas()
                 hand._ensure_name_label()
+            if hasattr(hand, "set_eliminated"):
+                hand.set_eliminated(is_eliminated)
+
+        self._check_online_hero_elimination_popup()
+
+    def _check_online_hero_elimination_popup(self):
+        if not self.online_mode or self.hero_elimination_popup_shown:
+            return
+        if not self.hero_widget:
+            return
+        if getattr(self.hero_widget, "is_eliminated", False):
+            self.hero_elimination_popup_shown = True
+            self.dialogs.show_eliminated_popup(online=True)
+
+    def _show_invalid_chain(self, data):
+        hand = self.hero_widget
+        if not hand:
+            return
+
+        keep_ids = set(data.get("keep_ids", []))
+        invalid_id = data.get("invalid_id")
+
+        for c in list(hand.selected_cards):
+            cid = f"{c.rank}_{c.suit}"
+            if cid not in keep_ids and cid != invalid_id:
+                c.selected = False
+                hand.selected_cards.remove(c)
+
+        invalid_card = None
+        for c in hand.cards:
+            if f"{c.rank}_{c.suit}" == invalid_id:
+                invalid_card = c
+                break
+
+        if invalid_card:
+            invalid_card.invalid = True
+            if invalid_card not in hand.selected_cards:
+                invalid_card.selected = True
+                hand.selected_cards.append(invalid_card)
+
+        hand.update_hand_layout()
+
+        def clear_invalid(dt):
+            if invalid_card:
+                invalid_card.invalid = False
+                if invalid_card in hand.selected_cards:
+                    invalid_card.selected = False
+                    hand.selected_cards.remove(invalid_card)
+            hand.update_hand_layout()
+
+        Clock.schedule_once(clear_invalid, 1.2)
 
     def _animate_take_cards(self, data, callback=None):
         hand = self.players_map.get(data.get("player_id"))

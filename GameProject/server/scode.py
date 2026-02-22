@@ -176,18 +176,32 @@ class RoomGameSession:
             else:
                 cards = []
 
-            for c in cards:
-                await self.room.broadcast(
-                    {
-                        "type": ServerCommands.GAME_INSTRUCTION,
-                        "instruction": {
-                            "cmd": "PLAY_CARD",
-                            "player_id": player.player_id,
-                            "card": {"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"},
-                            "durak_is_defense": durak_is_defense,
-                        },
-                    }
-                )
+            if cards:
+                is_durak = isinstance(self.engine.rules, DurakRules)
+                if is_durak:
+                    for c in cards:
+                        await self.room.broadcast(
+                            {
+                                "type": ServerCommands.GAME_INSTRUCTION,
+                                "instruction": {
+                                    "cmd": "PLAY_CARD",
+                                    "player_id": player.player_id,
+                                    "card": {"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"},
+                                    "durak_is_defense": durak_is_defense,
+                                },
+                            }
+                        )
+                else:
+                    await self.room.broadcast(
+                        {
+                            "type": ServerCommands.GAME_INSTRUCTION,
+                            "instruction": {
+                                "cmd": "PLAY_CARDS",
+                                "player_id": player.player_id,
+                                "cards": [{"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"} for c in cards],
+                            },
+                        }
+                    )
 
         elif event_type == "PLAYER_TOOK_CARDS":
             player = data.get("player")
@@ -256,6 +270,29 @@ class RoomGameSession:
                     },
                 }
             )
+        elif event_type == "SHOW_BRIDGE_DECISION":
+            await self.room.broadcast(
+                {
+                    "type": ServerCommands.GAME_INSTRUCTION,
+                    "instruction": {
+                        "cmd": "SHOW_BRIDGE_DECISION",
+                        "player_id": data.get("player_id"),
+                    },
+                }
+            )
+        elif event_type == "INVALID_CHAIN_CARD":
+            bad = data.get("invalid_card")
+            bad_id = f"{bad.rank}_{bad.suit}" if bad else None
+            await self.room.broadcast(
+                {
+                    "type": ServerCommands.GAME_INSTRUCTION,
+                    "instruction": {
+                        "cmd": "INVALID_CHAIN_CARD",
+                        "invalid_id": bad_id,
+                        "keep_ids": data.get("keep_ids", []),
+                    },
+                }
+            )
 
         elif event_type == "GAME_OVER":
             await self.room.broadcast(
@@ -300,6 +337,7 @@ class RoomGameSession:
                 "instruction": {
                     "cmd": "SETUP_TABLE",
                     "game_type": self.room.settings.get("game_type", "DURAK"),
+                    "online": True,
                     "multi_select": is_multi_select,
                     "players": players_payload,
                 },
@@ -340,6 +378,7 @@ class RoomGameSession:
             {
                 "cmd": "SETUP_TABLE",
                 "game_type": game_type,
+                "online": True,
                 "multi_select": is_multi_select,
                 "players": players_payload,
             },
@@ -387,7 +426,13 @@ class RoomGameSession:
                     for i, _ in enumerate(p.hand)
                 ]
 
-            snapshot.append({"player_id": p.player_id, "cards_data": cards_data})
+            snapshot.append(
+                {
+                    "player_id": p.player_id,
+                    "cards_data": cards_data,
+                    "is_eliminated": bool(getattr(p, "is_eliminated", False)),
+                }
+            )
         return snapshot
 
     async def _sync_hands_all(self):
@@ -437,6 +482,9 @@ class RoomGameSession:
 
     def _controls_for_player(self, username, rules):
         hero_idx = self.player_order.index(username)
+        hero_player = self.engine.players[hero_idx] if hero_idx < len(self.engine.players) else None
+        if hero_player and getattr(hero_player, "is_eliminated", False):
+            return {"show_action_btn": False, "btn_text": ""}
 
         if isinstance(rules, WarRules):
             return {"show_action_btn": False, "btn_text": ""}
@@ -504,6 +552,9 @@ class RoomGameSession:
 
         action = payload.get("action")
         current_player = self.engine.players[self.engine.active_player_idx]
+        if getattr(current_player, "is_eliminated", False):
+            await self.room.send_to(username, {"type": ServerCommands.GAME_ERROR, "message": "Ви вибули з гри"})
+            return
 
         engine_action = None
         if action == "play":
@@ -516,8 +567,12 @@ class RoomGameSession:
             if not cards:
                 await self.room.send_to(username, {"type": ServerCommands.GAME_ERROR, "message": "Карта не знайдена"})
                 return
-            self._pending_durak_is_defense = self._predict_durak_defense(cards, current_player)
-            engine_action = cards if len(cards) > 1 else cards[0]
+            mixed_ranks = len({c.rank for c in cards}) > 1
+            if isinstance(self.engine.rules, BridgeRules) and len(cards) > 1 and mixed_ranks:
+                engine_action = {"action": "play_chain", "cards": cards}
+            else:
+                self._pending_durak_is_defense = self._predict_durak_defense(cards, current_player)
+                engine_action = cards if len(cards) > 1 else cards[0]
 
         elif action in {"take", "pass"}:
             engine_action = action
@@ -527,6 +582,8 @@ class RoomGameSession:
 
         elif action == "set_bonus":
             engine_action = {"action": "set_bonus", "choice": payload.get("choice")}
+        elif action == "set_bridge_decision":
+            engine_action = {"action": "set_bridge_decision", "choice": payload.get("choice")}
 
         else:
             await self.room.send_to(username, {"type": ServerCommands.GAME_ERROR, "message": "Невідома дія"})

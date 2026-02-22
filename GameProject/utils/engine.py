@@ -9,6 +9,7 @@ class Player:
         self.hand = []
         self.is_attacker = False
         self.score = 0
+        self.is_eliminated = False
 
     def add_card(self, card):
         self.hand.append(card)
@@ -57,6 +58,40 @@ class GameEngine:
         # --- НОВЕ: Система подій (Observer) ---
         # Сюди ми підключимо обробник з PlayGameScreen
         self.on_game_event = None 
+        self._defer_draw_events = False
+        self._deferred_draw_events = []
+
+    def _is_player_active(self, player):
+        return not getattr(player, "is_eliminated", False)
+
+    def _next_active_index_from(self, start_idx, step=1):
+        if not self.players:
+            return 0
+        total = len(self.players)
+        step = max(1, int(step))
+        idx = start_idx % total
+        for _ in range(step):
+            found = None
+            for hop in range(1, total + 1):
+                cand = (idx + hop) % total
+                if self._is_player_active(self.players[cand]):
+                    found = cand
+                    break
+            if found is None:
+                return start_idx % total
+            idx = found
+        return idx
+
+    def _normalize_active_player(self):
+        if not self.players:
+            return False
+        if self._is_player_active(self.players[self.active_player_idx]):
+            return True
+        for i, p in enumerate(self.players):
+            if self._is_player_active(p):
+                self.active_player_idx = i
+                return True
+        return False
 
     def notify(self, event_type, **kwargs):
         """Відправляє подію назовні (у GUI)"""
@@ -110,8 +145,25 @@ class GameEngine:
         
         # === ЗМІНА: Відправляємо специфічну подію для колоди ===
         if cards_drawn:
-            # Передаємо також залишок у колоді, щоб оновити лічильник
-            self.notify("PLAYER_DRAW_DECK", player=player, cards=cards_drawn, deck_count=len(self.deck.cards))
+            payload = {
+                "player": player,
+                "cards": cards_drawn,
+                "deck_count": len(self.deck.cards)
+            }
+            # Для Бріджу в картковому ході спершу показуємо PLAYER_MOVE, потім добір.
+            if self._defer_draw_events:
+                self._deferred_draw_events.append(payload)
+            else:
+                self.notify("PLAYER_DRAW_DECK", **payload)
+
+    def _is_bridge_card_play_action(self, action):
+        if self.rules.__class__.__name__ != "BridgeRules":
+            return False
+        if isinstance(action, dict):
+            return action.get("action") == "play_chain"
+        if isinstance(action, str):
+            return False
+        return True
 
     def play_turn(self, player_action):
         """
@@ -121,7 +173,15 @@ class GameEngine:
         if self.game_over:
             return False
 
+        if not self._normalize_active_player():
+            self.game_over = True
+            self.notify("GAME_OVER", winner="Немає активних гравців")
+            return False
+
         current_player = self.players[self.active_player_idx]
+        if not self._is_player_active(current_player):
+            self.active_player_idx = self._next_active_index_from(self.active_player_idx, 1)
+            return False
         
         context = {
             "table": self.table,
@@ -137,8 +197,21 @@ class GameEngine:
             return False 
 
         # 2. Виконання ходу (зміна стану)
-        self.rules.execute_move(action=player_action, player=current_player, **context)
-        self.notify("PLAYER_MOVE", player=current_player, action=player_action)
+        should_defer_draw = self._is_bridge_card_play_action(player_action)
+        self._defer_draw_events = should_defer_draw
+        self._deferred_draw_events = []
+        try:
+            self.rules.execute_move(action=player_action, player=current_player, **context)
+        finally:
+            self._defer_draw_events = False
+
+        resolved_action = self.extra_data.pop("_resolved_action", player_action)
+        self.notify("PLAYER_MOVE", player=current_player, action=resolved_action)
+
+        if should_defer_draw and self._deferred_draw_events:
+            for draw_payload in self._deferred_draw_events:
+                self.notify("PLAYER_DRAW_DECK", **draw_payload)
+        self._deferred_draw_events = []
 
         # 3. Перевірка результату ходу (Переможець раунду або гри)
         result = self.rules.get_winner(**context)
@@ -196,7 +269,10 @@ class GameEngine:
         if isinstance(switch_result, int) and not isinstance(switch_result, bool):
             self.active_player_idx = switch_result % len(self.players)
         elif switch_result is True:
-            self.active_player_idx = (self.active_player_idx + 1) % len(self.players)
+            self.active_player_idx = self._next_active_index_from(self.active_player_idx, 1)
+
+        if self.players and not self._is_player_active(self.players[self.active_player_idx]):
+            self.active_player_idx = self._next_active_index_from(self.active_player_idx, 1)
         
         # Оповіщаємо про зміну ходу
         if prev_idx != self.active_player_idx:

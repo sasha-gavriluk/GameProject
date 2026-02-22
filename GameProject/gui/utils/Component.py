@@ -471,6 +471,7 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
     rank = StringProperty('A')
     is_face_up = BooleanProperty(True)
     selected = BooleanProperty(False)
+    invalid = BooleanProperty(False)
     on_click_action = ObjectProperty(None, allownone=True)
     angle = NumericProperty(0)
     offset_y = NumericProperty(0)
@@ -495,6 +496,7 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
         self.bind(pos=self.update_canvas, size=self.update_canvas, 
                   suit=self.update_content, rank=self.update_content, 
                   is_face_up=self.update_content, selected=self.on_selected_change,
+                  invalid=self.update_content,
                   angle=self.update_canvas, offset_y=self.update_canvas)
         self.update_canvas()
 
@@ -536,6 +538,9 @@ class CardWidget(ButtonBehavior, FloatLayout, Card):
                 Color(1, 0.8, 0, 0.4)
                 # Зміщуємо Line на dy
                 Line(rounded_rectangle=(-VisualConfig.sdp(3), dy - VisualConfig.sdp(3), self.width + VisualConfig.sdp(6), self.height + VisualConfig.sdp(6), VisualConfig.sdp(12)), width=VisualConfig.sdp(3))
+            if self.invalid:
+                Color(0.92, 0.21, 0.24, 0.55)
+                Line(rounded_rectangle=(-VisualConfig.sdp(4), dy - VisualConfig.sdp(4), self.width + VisualConfig.sdp(8), self.height + VisualConfig.sdp(8), VisualConfig.sdp(12)), width=VisualConfig.sdp(4))
 
             # 3. Тінь (малюємо під картою)
             Color(0, 0, 0, 0.2)
@@ -716,8 +721,11 @@ class HandWidget(FloatLayout, Player):
         self.bg_color_instr = None
         self._panel_default_color = (0, 0, 0, 0.4)
         self._panel_active_color = (0.88, 0.72, 0.12, 0.55)
+        self._panel_eliminated_color = (0.72, 0.18, 0.18, 0.38)
         self._name_default_color = (0.95, 0.97, 0.99, 0.96)
         self._name_active_color = (0.98, 0.87, 0.35, 1)
+        self._name_eliminated_color = (1, 0.45, 0.45, 1)
+        self.is_eliminated = False
 
         if self.is_main_player:
             self._base_size = (600, 150)
@@ -799,6 +807,7 @@ class HandWidget(FloatLayout, Player):
         
         self.bind(pos=self.update_bg, size=self.update_bg)
         self._ensure_name_label()
+        self.set_eliminated(self.is_eliminated)
 
     def update_bg(self, *args):
         if self.bg_rect:
@@ -814,6 +823,10 @@ class HandWidget(FloatLayout, Player):
 
     def apply_turn_highlight(self, is_current_turn):
         self._ensure_name_label()
+        if self.is_eliminated:
+            self.set_eliminated(True)
+            return
+
         self.lbl_name.color = self._name_default_color
         if self.bg_color_instr:
             self.bg_color_instr.rgba = self._panel_default_color
@@ -828,6 +841,23 @@ class HandWidget(FloatLayout, Player):
                 self.bg_color_instr.rgba = self._panel_active_color
             else:
                 self.lbl_name.color = self._name_active_color
+
+    def set_eliminated(self, is_eliminated):
+        self.is_eliminated = bool(is_eliminated)
+        self._ensure_name_label()
+
+        if self.is_eliminated:
+            self.lbl_name.color = self._name_eliminated_color
+            if self.bg_color_instr:
+                self.bg_color_instr.rgba = self._panel_eliminated_color
+            for c in list(self.selected_cards):
+                c.selected = False
+            self.selected_cards = []
+            return
+
+        self.lbl_name.color = self._name_default_color
+        if self.bg_color_instr:
+            self.bg_color_instr.rgba = self._panel_default_color
 
     def add_card(self, card_widget, initial_pos=None):
         """
@@ -974,7 +1004,7 @@ class HandWidget(FloatLayout, Player):
         self._update_name_position()
 
     def on_card_touch(self, instance, touch):
-        if not self.is_main_player: return False
+        if not self.is_main_player or self.is_eliminated: return False
         if instance.collide_point(*touch.pos):
             self.select_card(instance)
             return True

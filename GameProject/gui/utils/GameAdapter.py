@@ -39,6 +39,7 @@ class GameAdapter:
         self.pending_game_type = game_type
         self._pending_durak_is_defense = None
         self.current_deck_size = 52
+        self.hero_elimination_announced = False
 
     def set_visual_engine(self, ve):
         """Зв'язуємо адаптер з візуальним рушієм"""
@@ -132,6 +133,8 @@ class GameAdapter:
                 self.engine.play_turn({'action': 'set_suit', 'suit': data['suit']})
             elif action == 'set_bonus':
                 self.engine.play_turn({'action': 'set_bonus', 'choice': data['choice']})
+            elif action == 'set_bridge_decision':
+                self.engine.play_turn({'action': 'set_bridge_decision', 'choice': data['choice']})
             
             # Гравець ходить картою
             elif action == 'play':
@@ -144,8 +147,13 @@ class GameAdapter:
                             cards_to_play.append(c)
                             break
                 if cards_to_play:
-                    self._pending_durak_is_defense = self._predict_durak_defense(cards_to_play, hero)
-                    success = self.engine.play_turn(cards_to_play)
+                    is_bridge = isinstance(self.engine.rules, BridgeRules)
+                    mixed_ranks = len({c.rank for c in cards_to_play}) > 1
+                    if is_bridge and len(cards_to_play) > 1 and mixed_ranks:
+                        success = self.engine.play_turn({'action': 'play_chain', 'cards': cards_to_play})
+                    else:
+                        self._pending_durak_is_defense = self._predict_durak_defense(cards_to_play, hero)
+                        success = self.engine.play_turn(cards_to_play)
                     if not success:
                         self._pending_durak_is_defense = None
                         self.command_queue.append({"cmd": "SHOW_ERROR", "text": "Невірний хід!"})
@@ -164,6 +172,17 @@ class GameAdapter:
         if not self.engine:
              return []
 
+        hero = self.engine.players[0] if self.engine.players else None
+        if hero and getattr(hero, "is_eliminated", False) and not self.hero_elimination_announced:
+            self.hero_elimination_announced = True
+            self.engine.game_over = True
+            self.command_queue.append({
+                "cmd": "SHOW_ELIMINATED",
+                "online": False
+            })
+            self._process_queue()
+            return []
+        
         current_idx = self.engine.active_player_idx
         current_player = self.engine.players[current_idx]
         
@@ -194,6 +213,15 @@ class GameAdapter:
 
         rules = self.engine.rules
         hero_idx = 0
+        hero = self.engine.players[hero_idx] if self.engine.players else None
+
+        if hero and getattr(hero, "is_eliminated", False):
+            self.command_queue.append({
+                "cmd": "UPDATE_CONTROLS",
+                "show_action_btn": False,
+                "btn_text": ""
+            })
+            return
         
         if isinstance(rules, WarRules):
             self.command_queue.append({
@@ -314,13 +342,20 @@ class GameAdapter:
                 self._pending_durak_is_defense = None
             
             if isinstance(action, (list, tuple)):
-                for card in action:
-                    card_data = {"suit": card.suit, "rank": card.rank, "id": f"{card.rank}_{card.suit}"}
+                cards_data = [{"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"} for c in action]
+                if is_durak:
+                    for card_data in cards_data:
+                        self.command_queue.append({
+                            "cmd": "PLAY_CARD",
+                            "player_id": p.player_id,
+                            "card": card_data,
+                            "durak_is_defense": durak_is_defense
+                        })
+                else:
                     self.command_queue.append({
-                        "cmd": "PLAY_CARD",
+                        "cmd": "PLAY_CARDS",
                         "player_id": p.player_id,
-                        "card": card_data,
-                        "durak_is_defense": durak_is_defense
+                        "cards": cards_data
                     })
             elif hasattr(action, 'suit') and hasattr(action, 'rank'): 
                 card_data = {"suit": action.suit, "rank": action.rank, "id": f"{action.rank}_{action.suit}"}
@@ -340,7 +375,34 @@ class GameAdapter:
             self.command_queue.append({"cmd": "CLEAR_TABLE"})
             
         elif event_type == "GAME_OVER":
-            if hasattr(self.engine.rules, 'scores') or isinstance(self.engine.rules, BridgeRules):
+            if isinstance(self.engine.rules, BridgeRules):
+                active_players = [p for p in self.engine.players if not getattr(p, "is_eliminated", False)]
+                hero = next((p for p in self.engine.players if p.player_id == self.hero_id), None)
+
+                # Для Бріджу GAME_OVER може означати лише кінець раунду.
+                # Якщо лишився 1 (або 0) активний - це вже фінал гри.
+                if len(active_players) <= 1:
+                    if hero and getattr(hero, "is_eliminated", False):
+                        self.command_queue.append({
+                            "cmd": "SHOW_ELIMINATED",
+                            "online": False
+                        })
+                    else:
+                        winner_name = active_players[0].name if active_players else data.get('winner', 'Невідомо')
+                        if hero and active_players and active_players[0].player_id == self.hero_id:
+                            winner_name = "Я"
+                        self.command_queue.append({
+                            "cmd": "SHOW_WINNER",
+                            "winner": winner_name
+                        })
+                else:
+                    scores = [{'name': p.name, 'score': p.score} for p in self.engine.players]
+                    self.command_queue.append({
+                        "cmd": "SHOW_SCORES",
+                        "is_round_end": True,
+                        "scores": scores
+                    })
+            elif hasattr(self.engine.rules, 'scores'):
                 scores = [{'name': p.name, 'score': p.score} for p in self.engine.players]
                 self.command_queue.append({
                     "cmd": "SHOW_SCORES",
@@ -359,6 +421,19 @@ class GameAdapter:
                 "player_id": data['player_id'],
                 "mult": data['mult'],
                 "sub": data['sub']
+            })
+        elif event_type == "SHOW_BRIDGE_DECISION":
+            self.command_queue.append({
+                "cmd": "SHOW_BRIDGE_DECISION",
+                "player_id": data['player_id']
+            })
+        elif event_type == "INVALID_CHAIN_CARD":
+            bad = data.get("invalid_card")
+            bad_id = f"{bad.rank}_{bad.suit}" if bad else None
+            self.command_queue.append({
+                "cmd": "INVALID_CHAIN_CARD",
+                "invalid_id": bad_id,
+                "keep_ids": data.get("keep_ids", []),
             })
 
         elif event_type == "RESHUFFLE_TABLE":
@@ -416,7 +491,11 @@ class GameAdapter:
         res = []
         for p in self.engine.players:
             cards = [{"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"} for c in p.hand]
-            res.append({"player_id": p.player_id, "cards_data": cards})
+            res.append({
+                "player_id": p.player_id,
+                "cards_data": cards,
+                "is_eliminated": bool(getattr(p, "is_eliminated", False))
+            })
         return res
     
     def _reset_bot_timer(self):
@@ -443,6 +522,7 @@ class GameAdapter:
         self.command_queue.append({
             "cmd": "SETUP_TABLE",
             "game_type": self.game_type,
+            "online": False,
             "multi_select": self.game_type != "WAR",
             "players": [
                 {"id": p.player_id, "name": p.name, "is_hero": (p.player_id == self.hero_id)}
@@ -453,6 +533,7 @@ class GameAdapter:
         self.engine.start_game()
         self._reset_bot_timer()
         self.waiting_for_deal = True
+        self.hero_elimination_announced = False
         self._announce_turn()
         self._check_ui_controls()
         self._process_queue()
@@ -505,6 +586,7 @@ class GameAdapter:
         setup_cmd = {
             "cmd": "SETUP_TABLE",
             "game_type": self.game_type,
+            "online": False,
             "multi_select": self.pending_is_multi_select,
             "players": [
                 {"id": p.player_id, "name": ("Я" if p.player_id == self.hero_id else p.name), "is_hero": (p.player_id == self.hero_id)}
@@ -516,6 +598,7 @@ class GameAdapter:
         self.engine.start_game()
         self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
         self.waiting_for_deal = True
+        self.hero_elimination_announced = False
         self._announce_turn()
         
         self._process_queue()
