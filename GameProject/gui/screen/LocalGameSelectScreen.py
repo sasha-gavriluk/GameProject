@@ -51,4 +51,4 @@ class LocalGameSelectScreen(BaseScreen):
 
     def start_game(self, game_type):
         # Викликаємо оновлений switch_screen з параметром game_type
-        self.controller.switch_screen('play_game', game_type=game_type)
+        self.controller.switch_screen('play_game', game_type=game_type, online=False)

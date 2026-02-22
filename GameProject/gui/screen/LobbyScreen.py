@@ -372,7 +372,12 @@ class LobbyScreen(BaseScreen):
             self.chat_history.append_message(user, msg)
             Clock.schedule_once(lambda *_: setattr(self.chat_scroll, "scroll_y", 0), 0)
         elif msg_type == "GAME_STARTED":
-            pass # Перехід до гри буде тут
+            game_type = data.get("game_type", self.settings.get("game_type", "DURAK"))
+            play_screen = self.controller.get_screen('play_game')
+            play_screen.update_context(game_type=game_type, online=True, room_id=self.room_id)
+            # Важливо: перемикаємо слухача до переходу екрану, щоб не загубити перші GAME_INSTRUCTION.
+            net.start_listener(play_screen.on_network_message)
+            self.controller.current = 'play_game'
 
     def update_room_ui(self, data):
         host = data.get("host")

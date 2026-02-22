@@ -248,6 +248,10 @@ class NetworkBridge:
         """Відправляє дію гравця на сервер"""
         return await self._send_only(ServerCommands.GAME_ACTION, payload)
 
+    async def request_game_snapshot(self):
+        """Запит повного стану онлайн-гри для поточного клієнта."""
+        return await self._send_only(ServerCommands.GET_GAME_SNAPSHOT, {})
+
     async def find_local_server(self, port=8765, timeout=1.0):
         """Шукає сервер у локальній мережі через UDP discovery. Повертає IP або None."""
         return await asyncio.to_thread(self._udp_discover, port, timeout)
