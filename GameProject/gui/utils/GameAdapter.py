@@ -29,9 +29,6 @@ class GameAdapter:
         # Таймер для затримки бота
         self.bot_next_move_time = 0 
         self.waiting_for_deal = False
-        self.waiting_for_throw_confirm = False
-        self.pending_bot_action = None
-        self.pending_bot_active_idx = None
         self.waiting_for_player_count = False
         self.pending_is_multi_select = True
         self.pending_max_players = 2
@@ -93,27 +90,6 @@ class GameAdapter:
                 deck_size = data.get('deck_size', self.current_deck_size)
                 self._start_game_with_players(count, settings, deck_size)
                 return []
-            elif action == 'throw_more':
-                self.waiting_for_throw_confirm = False
-                self.pending_bot_action = None
-                self.pending_bot_active_idx = None
-                self._check_ui_controls()
-                self._process_queue()
-                return []
-            elif action == 'throw_done':
-                if self.pending_bot_action is not None and self.pending_bot_active_idx is not None:
-                    self.engine.active_player_idx = self.pending_bot_active_idx
-                    pending_player = self.engine.players[self.pending_bot_active_idx]
-                    self._pending_durak_is_defense = self._predict_durak_defense(
-                        self.pending_bot_action, pending_player
-                    )
-                    self.engine.play_turn(self.pending_bot_action)
-                self.waiting_for_throw_confirm = False
-                self.pending_bot_action = None
-                self.pending_bot_active_idx = None
-                self._check_ui_controls()
-                self._process_queue()
-                return []
                 
             elif action == 'get_scores':
                 if self.engine:
@@ -135,6 +111,8 @@ class GameAdapter:
                 self.engine.play_turn({'action': 'set_bonus', 'choice': data['choice']})
             elif action == 'set_bridge_decision':
                 self.engine.play_turn({'action': 'set_bridge_decision', 'choice': data['choice']})
+            elif action == 'set_durak_defense_choice':
+                self.engine.play_turn({'action': 'set_durak_defense_choice', 'choice': data.get('choice')})
             
             # Гравець ходить картою
             elif action == 'play':
@@ -190,17 +168,9 @@ class GameAdapter:
              if time.time() > self.bot_next_move_time:
                  action = current_player.think(self.engine)
                  if action:
-                     if self._should_ask_for_throw(action):
-                         self.pending_bot_action = action
-                         self.pending_bot_active_idx = self.engine.active_player_idx
-                         self.engine.active_player_idx = 0
-                         self.waiting_for_throw_confirm = True
-                         self.command_queue.append({"cmd": "ASK_THROW"})
-                         self._process_queue()
-                     else:
-                         self._pending_durak_is_defense = self._predict_durak_defense(action, current_player)
-                         self.engine.play_turn(action)
-                         self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
+                     self._pending_durak_is_defense = self._predict_durak_defense(action, current_player)
+                     self.engine.play_turn(action)
+                     self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
         else:
              self.bot_next_move_time = time.time() + VisualConfig.BOT_DELAY
 
@@ -311,11 +281,16 @@ class GameAdapter:
             p = data['player']
             cards = data['cards']
             cards_data = [{"suit": c.suit, "rank": c.rank, "id": f"{c.rank}_{c.suit}"} for c in cards]
-            self.command_queue.append({
+            instruction = {
                 "cmd": "DRAW_CARDS_ANIMATION",
                 "player_id": p.player_id,
                 "cards": cards_data
-            })
+            }
+            # Добір карт не блокуємо загальною чергою, щоб анімація йшла паралельно.
+            if self.visual_engine:
+                self.visual_engine.execute_instruction(instruction)
+            else:
+                self.command_queue.append(instruction)
 
         elif event_type == "PLAYER_TOOK_CARDS":
              player = data.get('player')
@@ -421,6 +396,11 @@ class GameAdapter:
                 "player_id": data['player_id'],
                 "mult": data['mult'],
                 "sub": data['sub']
+            })
+        elif event_type == "SHOW_DURAK_DEFENSE_CHOICE":
+            self.command_queue.append({
+                "cmd": "SHOW_DURAK_DEFENSE_CHOICE",
+                "player_id": data.get('player_id')
             })
         elif event_type == "SHOW_BRIDGE_DECISION":
             self.command_queue.append({
@@ -603,19 +583,6 @@ class GameAdapter:
         
         self._process_queue()
 
-    def _should_ask_for_throw(self, action):
-        if not isinstance(self.engine.rules, DurakRules): return False
-        if action not in ("pass", "take"): return False
-        rules = self.engine.rules
-        hero = self.engine.players[0]
-        if self.engine.active_player_idx == 0: return False
-        if rules.defender_idx == 0: return False
-        if not self.engine.table: return False
-        ranks_on_table = {c.rank for c in self.engine.table}
-        for c in hero.hand:
-            if c.rank in ranks_on_table: return True
-        return False
-
     def _predict_durak_defense(self, action, player):
         if not isinstance(self.engine.rules, DurakRules): return False
         if isinstance(action, str): return False
@@ -627,9 +594,9 @@ class GameAdapter:
         cards_played = action if isinstance(action, (list, tuple)) else [action]
         if not cards_played: return False
         can_transfer = rules.settings.get("mode") in ("perevodnoy", "mixed") and rules.transfer_allowed
-        if rules.pending_attacks and can_transfer and len(cards_played) == len(rules.pending_attacks):
+        if rules.pending_attacks and can_transfer and 0 < len(cards_played) <= len(rules.pending_attacks):
             match = all(
-                cards_played[i].rank == rules.pending_attacks[i].rank
+                cards_played[i].rank == rules.pending_attacks[0].rank
                 for i in range(len(cards_played))
             )
             if match: return False

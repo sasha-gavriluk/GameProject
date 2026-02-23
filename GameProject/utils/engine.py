@@ -62,7 +62,12 @@ class GameEngine:
         self._deferred_draw_events = []
 
     def _is_player_active(self, player):
-        return not getattr(player, "is_eliminated", False)
+        if getattr(player, "is_eliminated", False):
+            return False
+        # У Дураку гравець без карт не має отримувати хід.
+        if self.rules.__class__.__name__ == "DurakRules":
+            return len(getattr(player, "hand", [])) > 0
+        return True
 
     def _next_active_index_from(self, start_idx, step=1):
         if not self.players:
@@ -179,6 +184,7 @@ class GameEngine:
             return False
 
         current_player = self.players[self.active_player_idx]
+        print(f"[TURN] Зараз ходить: {current_player.name} (idx={self.active_player_idx})")
         if not self._is_player_active(current_player):
             self.active_player_idx = self._next_active_index_from(self.active_player_idx, 1)
             return False
@@ -276,6 +282,7 @@ class GameEngine:
         
         # Оповіщаємо про зміну ходу
         if prev_idx != self.active_player_idx:
+            print(f"[TURN] Наступний хід: {self.players[self.active_player_idx].name} (idx={self.active_player_idx})")
             self.notify("TURN_SWITCH", active_player_idx=self.active_player_idx)
         
         return True

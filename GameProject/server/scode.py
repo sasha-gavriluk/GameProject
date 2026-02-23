@@ -26,6 +26,7 @@ class RoomGameSession:
         self._pending_durak_is_defense = None
         self._event_queue = deque()
         self._event_busy = False
+        self._round_transition_busy = False
 
     async def start(self):
         game_type = self.room.settings.get("game_type", "DURAK")
@@ -47,12 +48,15 @@ class RoomGameSession:
             deck_size = 36
         else:
             durak_mode = self.room.settings.get("durak_mode", "mixed")
+            neighbors_only = bool(self.room.settings.get("neighbors_only", True))
+            allow_overthrow = bool(self.room.settings.get("allow_overthrow", True))
+            first_bout_5 = bool(self.room.settings.get("first_bout_5", False))
             rules = DurakRules(
                 settings={
                     "mode": durak_mode,
-                    "neighbors_only": True,
-                    "allow_overthrow": True,
-                    "first_bout_5": False,
+                    "neighbors_only": neighbors_only,
+                    "allow_overthrow": allow_overthrow,
+                    "first_bout_5": first_bout_5,
                 }
             )
 
@@ -270,6 +274,16 @@ class RoomGameSession:
                     },
                 }
             )
+        elif event_type == "SHOW_DURAK_DEFENSE_CHOICE":
+            await self.room.broadcast(
+                {
+                    "type": ServerCommands.GAME_INSTRUCTION,
+                    "instruction": {
+                        "cmd": "SHOW_DURAK_DEFENSE_CHOICE",
+                        "player_id": data.get("player_id"),
+                    },
+                }
+            )
         elif event_type == "SHOW_BRIDGE_DECISION":
             await self.room.broadcast(
                 {
@@ -295,12 +309,45 @@ class RoomGameSession:
             )
 
         elif event_type == "GAME_OVER":
-            await self.room.broadcast(
-                {
-                    "type": ServerCommands.GAME_INSTRUCTION,
-                    "instruction": {"cmd": "SHOW_WINNER", "winner": data.get("winner", "Невідомо")},
-                }
-            )
+            if isinstance(self.engine.rules, BridgeRules):
+                active_players = [p for p in self.engine.players if not getattr(p, "is_eliminated", False)]
+                if len(active_players) > 1:
+                    scores = [{"name": p.name, "score": p.score} for p in self.engine.players]
+                    await self.room.broadcast(
+                        {
+                            "type": ServerCommands.GAME_INSTRUCTION,
+                            "instruction": {
+                                "cmd": "SHOW_SCORES",
+                                "is_round_end": True,
+                                "scores": scores,
+                            },
+                        }
+                    )
+                else:
+                    winner_name = active_players[0].name if active_players else "Невідомо"
+                    await self.room.broadcast(
+                        {
+                            "type": ServerCommands.GAME_INSTRUCTION,
+                            "instruction": {
+                                "cmd": "SHOW_WINNER",
+                                "winner": winner_name,
+                                "online": True,
+                            },
+                        }
+                    )
+                    await self._finish_match_and_return_to_room()
+            else:
+                await self.room.broadcast(
+                    {
+                        "type": ServerCommands.GAME_INSTRUCTION,
+                        "instruction": {
+                            "cmd": "SHOW_WINNER",
+                            "winner": data.get("winner", "Невідомо"),
+                            "online": True,
+                        },
+                    }
+                )
+                await self._finish_match_and_return_to_room()
 
         elif event_type == "TURN_SWITCH":
             await self._announce_turn()
@@ -480,6 +527,53 @@ class RoomGameSession:
                 },
             )
 
+    async def _start_next_round(self):
+        if not self.engine or self._round_transition_busy:
+            return False
+
+        if not self.engine.game_over:
+            return False
+
+        if isinstance(self.engine.rules, BridgeRules):
+            active_players = [p for p in self.engine.players if not getattr(p, "is_eliminated", False)]
+            if len(active_players) <= 1:
+                return False
+
+        self._round_transition_busy = True
+        try:
+            game_type = self.room.settings.get("game_type", "DURAK")
+            deck_size = int(self.room.settings.get("deck_size", 36))
+            if game_type == "BRIDGE":
+                deck_size = 36
+
+            self.engine.game_over = False
+            new_deck = Deck(size=deck_size)
+            if isinstance(self.engine.rules, WarRules):
+                self.engine.rules.initial_cards_count = max(1, deck_size // max(1, len(self.engine.players)))
+
+            self.engine.setup_game(new_deck)
+
+            for username in self.player_order:
+                await self._send_setup_table(username)
+
+            self.engine.start_game()
+            await self._announce_turn()
+            await self._send_controls_all()
+            return True
+        finally:
+            self._round_transition_busy = False
+
+    async def _finish_match_and_return_to_room(self):
+        self.room.game_started = False
+        if self.room.game_session is self:
+            self.room.game_session = None
+
+        # Після завершення матчу повертаємо готовність у стан лобі:
+        # хост готовий, решта мають підтвердити готовність знову.
+        for username, state in self.room.players_state.items():
+            state["ready"] = bool(username == self.room.host)
+        await self.room.broadcast_state()
+
     def _controls_for_player(self, username, rules):
         hero_idx = self.player_order.index(username)
         hero_player = self.engine.players[hero_idx] if hero_idx < len(self.engine.players) else None
@@ -545,12 +639,39 @@ class RoomGameSession:
             await self.room.send_to(username, {"type": ServerCommands.GAME_ERROR, "message": "Гравця не знайдено"})
             return
 
+        action = payload.get("action")
+        if action == "get_scores":
+            scores = [{"name": p.name, "score": p.score} for p in self.engine.players]
+            await self.room.send_to(
+                username,
+                {
+                    "type": ServerCommands.GAME_INSTRUCTION,
+                    "instruction": {
+                        "cmd": "SHOW_SCORES",
+                        "is_round_end": False,
+                        "scores": scores,
+                    },
+                },
+            )
+            return
+
+        if action == "start_new_round":
+            started = await self._start_next_round()
+            if not started:
+                await self.room.send_to(
+                    username,
+                    {
+                        "type": ServerCommands.GAME_ERROR,
+                        "message": "Новий раунд зараз недоступний",
+                    },
+                )
+            return
+
         player_idx = self.player_order.index(username)
         if player_idx != self.engine.active_player_idx:
             await self.room.send_to(username, {"type": ServerCommands.GAME_ERROR, "message": "Зараз не ваш хід"})
             return
 
-        action = payload.get("action")
         current_player = self.engine.players[self.engine.active_player_idx]
         if getattr(current_player, "is_eliminated", False):
             await self.room.send_to(username, {"type": ServerCommands.GAME_ERROR, "message": "Ви вибули з гри"})
@@ -582,6 +703,8 @@ class RoomGameSession:
 
         elif action == "set_bonus":
             engine_action = {"action": "set_bonus", "choice": payload.get("choice")}
+        elif action == "set_durak_defense_choice":
+            engine_action = {"action": "set_durak_defense_choice", "choice": payload.get("choice")}
         elif action == "set_bridge_decision":
             engine_action = {"action": "set_bridge_decision", "choice": payload.get("choice")}
 
@@ -601,7 +724,16 @@ class RoomGameSession:
         if isinstance(action, str):
             return False
         player_idx = self.engine.players.index(player)
-        return bool(player_idx == rules.defender_idx and not rules.is_transfer_move)
+        if player_idx != rules.defender_idx:
+            return False
+        cards_played = action if isinstance(action, (list, tuple)) else [action]
+        if not cards_played:
+            return False
+        can_transfer = rules.settings.get("mode") in ("perevodnoy", "mixed") and rules.transfer_allowed
+        if rules.pending_attacks and can_transfer and 0 < len(cards_played) <= len(rules.pending_attacks):
+            if all(c.rank == rules.pending_attacks[0].rank for c in cards_played):
+                return False
+        return not rules.is_transfer_move
 
 
 class Room:
@@ -616,6 +748,9 @@ class Room:
             "countdown": 5,
             "durak_mode": "mixed",
             "deck_size": 36,
+            "neighbors_only": True,
+            "allow_overthrow": True,
+            "first_bout_5": False,
         }
         self.countdown_task = None
         self.game_started = False

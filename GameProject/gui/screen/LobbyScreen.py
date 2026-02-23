@@ -93,6 +93,13 @@ class GameSettingsDialog:
         for k, btn in self.deck_size_btns.items():
             btn.bind(on_release=lambda instance, val=k: self._on_deck_change(val))
 
+        self.throw_scope_btns = {
+            "neighbors": self.ui.dynamic.create("GameToggleButton", text="Бокові", group="throw_scope"),
+            "all": self.ui.dynamic.create("GameToggleButton", text="Всі", group="throw_scope"),
+        }
+        for k, btn in self.throw_scope_btns.items():
+            btn.bind(on_release=lambda instance, val=k: self._on_throw_scope_change(val))
+
         self.bridge_lbl = self.ui.dynamic.create("Label", text="Використовується стандартна колода 52 карти.", font_size=VisualConfig.ssp(18))
 
     def _on_mode_change(self, val):
@@ -103,6 +110,11 @@ class GameSettingsDialog:
     def _on_deck_change(self, val):
         if not self.lobby.is_host: return
         self.lobby.settings["deck_size"] = val
+        self.lobby.send_settings_update()
+
+    def _on_throw_scope_change(self, val):
+        if not self.lobby.is_host: return
+        self.lobby.settings["neighbors_only"] = (val != "all")
         self.lobby.send_settings_update()
 
     @staticmethod
@@ -132,6 +144,16 @@ class GameSettingsDialog:
                 self._move_btn_to_row(btn, row_mode)
             self.settings_container.add_widget(row_mode)
 
+            self.settings_container.add_widget(self.ui.dynamic.create("Label", text="Підкидання:", size_hint_y=None, height=VisualConfig.sdp(30), font_size=VisualConfig.ssp(18)))
+            row_throw = self.ui.dynamic.create("BoxLayout", orientation='horizontal', spacing=10, size_hint_y=None, height=VisualConfig.sdp(50))
+            current_neighbors_only = self.lobby.settings.get("neighbors_only", True)
+            current_throw = "neighbors" if current_neighbors_only else "all"
+            for k, btn in self.throw_scope_btns.items():
+                btn.disabled = disabled
+                btn.state = "down" if k == current_throw else "normal"
+                self._move_btn_to_row(btn, row_throw)
+            self.settings_container.add_widget(row_throw)
+
         if game_type in ["DURAK", "WAR"]:
             self.settings_container.add_widget(self.ui.dynamic.create("Label", text="Колода:", size_hint_y=None, height=VisualConfig.sdp(30), font_size=VisualConfig.ssp(18)))
             row_deck = self.ui.dynamic.create("BoxLayout", orientation='horizontal', spacing=10, size_hint_y=None, height=VisualConfig.sdp(50))
@@ -156,7 +178,15 @@ class LobbyScreen(BaseScreen):
     def __init__(self, ui_manager, controller, **kwargs):
         self.is_host = False
         self.room_id = None
-        self.settings = {"game_type": "DURAK", "countdown": 5, "durak_mode": "mixed", "deck_size": 36}
+        self.settings = {
+            "game_type": "DURAK",
+            "countdown": 5,
+            "durak_mode": "mixed",
+            "deck_size": 36,
+            "neighbors_only": True,
+            "allow_overthrow": True,
+            "first_bout_5": False,
+        }
         super().__init__(ui_manager, controller, **kwargs)
 
     def build_ui(self):
@@ -383,6 +413,9 @@ class LobbyScreen(BaseScreen):
         host = data.get("host")
         players = data.get("players", {})
         self.settings = data.get("settings", {})
+        self.settings.setdefault("neighbors_only", True)
+        self.settings.setdefault("allow_overthrow", True)
+        self.settings.setdefault("first_bout_5", False)
         my_name = game_settings.login
 
         self.is_host = (my_name == host)

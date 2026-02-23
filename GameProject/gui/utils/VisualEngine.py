@@ -173,13 +173,15 @@ class DialogManager:
 
     def show_winner_popup(self, data):
         winner = data.get('winner', 'Невідомо')
+        online_mode = bool(data.get('online', False))
         view = GamePopup(title="Результат", size_hint=(None, None), size=(VisualConfig.sdp(460), VisualConfig.sdp(260)), auto_dismiss=False)
         layout = BoxLayout(orientation='vertical', padding=VisualConfig.sdp(20), spacing=VisualConfig.sdp(12))
         layout.add_widget(Label(text="Гру завершено", font_size=VisualConfig.ssp(22), bold=True, size_hint_y=0.35))
         layout.add_widget(Label(text=f"Переможець: {winner}", font_size=VisualConfig.ssp(18), size_hint_y=0.3))
         
         btn_row = BoxLayout(orientation='horizontal', spacing=VisualConfig.sdp(10), size_hint_y=0.35)
-        btn_new, btn_exit = GameButton(text="Нова гра"), GameButton(text="Вийти в меню")
+        exit_text = "Вийти в кімнату" if online_mode else "Вийти в меню"
+        btn_new, btn_exit = GameButton(text="Нова гра"), GameButton(text=exit_text)
         
         btn_new.bind(on_release=lambda *_: self._trigger_new_round(view))
         btn_exit.bind(on_release=lambda *_: self._trigger_exit_to_menu(view))
@@ -290,6 +292,23 @@ class DialogManager:
 
         layout.add_widget(btn_end)
         layout.add_widget(btn_cont)
+        view.content = layout
+        view.open()
+
+    def show_durak_defense_choice(self, player_id):
+        if not self.engine.hero_widget or self.engine.hero_widget.player_id != player_id:
+            return
+        view = GamePopup(title="Дурак", size_hint=(None, None), size=(VisualConfig.sdp(430), VisualConfig.sdp(210)), auto_dismiss=False)
+        layout = BoxLayout(orientation='vertical', padding=VisualConfig.sdp(20), spacing=VisualConfig.sdp(10))
+        layout.add_widget(Label(text="Оберіть дію: бити чи перевести?", font_size=VisualConfig.ssp(18), size_hint_y=0.45))
+
+        btn_beat = GameButton(text="Бити", size_hint_y=0.275)
+        btn_transfer = GameButton(text="Перевести", size_hint_y=0.275)
+        btn_beat.bind(on_release=lambda x: self._send_choice('set_durak_defense_choice', 'choice', 'beat', view))
+        btn_transfer.bind(on_release=lambda x: self._send_choice('set_durak_defense_choice', 'choice', 'transfer', view))
+
+        layout.add_widget(btn_beat)
+        layout.add_widget(btn_transfer)
         view.content = layout
         view.open()
 
@@ -636,11 +655,12 @@ class VisualEngine(FloatLayout):
             elif cmd == "HIDE_ORDERED_SUIT": self._hide_ordered_suit(instruction)
             elif cmd == "SHOW_ERROR": print(f"Error: {instruction.get('text')}")
             # Делегація
-            elif cmd == "ASK_THROW": self.dialogs.show_throw_confirm()
+            elif cmd == "ASK_THROW": pass
             elif cmd == "SHOW_PLAYER_COUNT": self.dialogs.show_player_count_popup(instruction)
             elif cmd == "SHOW_WINNER": self.dialogs.show_winner_popup(instruction)
             elif cmd == "SHOW_SUIT_SELECTOR": self.dialogs.show_suit_selection(instruction.get("player_id"))
             elif cmd == "SHOW_BONUS_SELECTOR": self.dialogs.show_jack_bonus_selection(instruction.get("player_id"), instruction.get("mult"), instruction.get("sub"))
+            elif cmd == "SHOW_DURAK_DEFENSE_CHOICE": self.dialogs.show_durak_defense_choice(instruction.get("player_id"))
             elif cmd == "SHOW_BRIDGE_DECISION": self.dialogs.show_bridge_decision(instruction.get("player_id"))
             elif cmd == "INVALID_CHAIN_CARD": self._show_invalid_chain(instruction)
             elif cmd == "SHOW_ELIMINATED": self.dialogs.show_eliminated_popup(bool(instruction.get("online", False)))

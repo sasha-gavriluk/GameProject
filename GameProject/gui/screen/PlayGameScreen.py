@@ -95,11 +95,13 @@ class PlayGameScreen(BaseScreen):
         if msg_type == "GAME_INSTRUCTION":
             instruction = data.get("instruction")
             if instruction:
-                self.online_queue.append(instruction)
-                self._drain_online_queue()
+                if not self._execute_online_parallel_if_possible(instruction):
+                    self.online_queue.append(instruction)
+                    self._drain_online_queue()
         elif msg_type == "GAME_BATCH":
             for instruction in data.get("instructions", []):
-                self.online_queue.append(instruction)
+                if not self._execute_online_parallel_if_possible(instruction):
+                    self.online_queue.append(instruction)
             self._drain_online_queue()
         elif msg_type == "GAME_ERROR":
             print(f"[OnlineGame] {data.get('message', 'Невідома помилка')}")
@@ -114,6 +116,15 @@ class PlayGameScreen(BaseScreen):
         self.online_busy = True
         self.visual_engine.execute_instruction(instruction, on_complete=self._on_online_instruction_done)
 
+    def _execute_online_parallel_if_possible(self, instruction):
+        if not self.visual_engine:
+            return False
+        if instruction.get("cmd") == "DRAW_CARDS_ANIMATION":
+            # Добір карт запускаємо одразу, без очікування основної черги інструкцій.
+            self.visual_engine.execute_instruction(instruction)
+            return True
+        return False
+
     def _on_online_instruction_done(self):
         self.online_busy = False
         self._drain_online_queue()
@@ -121,6 +132,6 @@ class PlayGameScreen(BaseScreen):
     def go_back(self):
         if self.online_mode:
             net.stop_listener()
-            self.controller.switch_screen('room_entry')
+            self.controller.switch_screen('lobby', room_id=self.room_id)
             return
         self.controller.switch_screen('local_select')

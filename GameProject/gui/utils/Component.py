@@ -139,10 +139,13 @@ class GameToggleButton(ToggleButton):
 
         self._idle_bg = (0.11, 0.13, 0.16, 1)
         self._hover_bg = (0.14, 0.17, 0.21, 1)
-        self._down_bg = (0.08, 0.10, 0.13, 1)
+        # Активний стан зроблено значно світлішим, щоб вибір був очевидним.
+        self._down_bg = (0.24, 0.30, 0.39, 1)
         self._disabled_bg = (0.10, 0.11, 0.13, 0.62)
         self._border = (0.27, 0.31, 0.38, 1)
+        self._down_border = (0.66, 0.76, 0.88, 1)
         self._accent = (0.78, 0.66, 0.42, 1)
+        self._down_accent = (0.93, 0.84, 0.58, 1)
         self._radius = VisualConfig.sdp(12)
 
         self.bind(pos=self._redraw, size=self._redraw, state=self._redraw, disabled=self._redraw)
@@ -189,10 +192,13 @@ class GameToggleButton(ToggleButton):
             RoundedRectangle(pos=(x, y), size=(w, h), radius=radius)
 
         with self.canvas.after:
-            Color(*self._border)
-            Line(rounded_rectangle=(x, y, w, h, self._radius), width=VisualConfig.sdp(1.1))
+            border = self._down_border if self.state == "down" else self._border
+            accent = self._down_accent if self.state == "down" else self._accent
+            border_w = VisualConfig.sdp(1.5) if self.state == "down" else VisualConfig.sdp(1.1)
+            Color(*border)
+            Line(rounded_rectangle=(x, y, w, h, self._radius), width=border_w)
 
-            Color(*self._accent)
+            Color(*accent)
             Line(
                 points=(
                     x + VisualConfig.sdp(10),

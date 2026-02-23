@@ -735,6 +735,16 @@ class BridgeRules(GameRules):
                     break
         
         if winner_found:
+            # Якщо фінальна карта дала штрафний добір (7/8/9♣), спершу застосовуємо
+            # його до наступного активного гравця, і лише потім завершуємо раунд.
+            if engine and self.pending_draw > 0 and winner_idx is not None:
+                victim_idx = self._next_active_idx(engine, winner_idx, 1)
+                if victim_idx != winner_idx:
+                    victim_player = players[victim_idx]
+                    print(f"🎁 Перед завершенням раунду {victim_player.name} добирає {self.pending_draw} карт.")
+                    self._safe_draw(engine, victim_player, self.pending_draw, kwargs.get('table'))
+                self.pending_draw = 0
+
             self._calculate_scores(players, winner_idx=winner_idx)
             
             # === ОСЬ ТУТ КЛЮЧОВИЙ МОМЕНТ ===
